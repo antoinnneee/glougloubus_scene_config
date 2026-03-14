@@ -19,9 +19,9 @@
           <section class="panel preview-panel">
             <h2>LED Matrix Preview (192 x 32)</h2>
           <div class="canvas-container">
-            <!-- The actual canvas is 192x32 logically -->
-            <canvas id="led-canvas" width="192" height="32"></canvas>
-            <div class="canvas-grid-overlay"></div>
+            <!-- Higher resolution matching 192x32 at scale of 5 for dot drawing -->
+            <canvas id="led-canvas" width="960" height="160"></canvas>
+            <!-- Overlay removed since drawing dots manually -->
           </div>
           <div class="preview-controls">
             <button id="btn-play-pause" class="btn primary">Play</button>

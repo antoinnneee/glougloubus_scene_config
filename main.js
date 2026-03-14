@@ -166,8 +166,8 @@ function init() {
 function getCanvasCoords(event) {
   const rect = canvas.getBoundingClientRect();
   // Map CSS coordinates to logic (192x32) coordinates
-  const scaleX = canvas.width / rect.width;
-  const scaleY = canvas.height / rect.height;
+  const scaleX = WIDTH / rect.width;
+  const scaleY = HEIGHT / rect.height;
   return {
     x: (event.clientX - rect.left) * scaleX,
     y: (event.clientY - rect.top) * scaleY
@@ -465,8 +465,8 @@ function updateUI() {
 function drawFrameToContext(context, frameIndex, drawActiveSelectionBox = false) {
   const items = frames[frameIndex] || [];
   
-  // Clear context
-  context.fillStyle = 'black';
+  // Clear context with standard background
+  context.fillStyle = '#050505';
   context.fillRect(0, 0, WIDTH, HEIGHT);
 
   // Draw items
@@ -485,37 +485,93 @@ function drawFrameToContext(context, frameIndex, drawActiveSelectionBox = false)
       });
     }
     
-    // Draw Selection Box
+    // Legacy Selection Box (only used for thumbnails now)
     if (drawActiveSelectionBox && item.id === selectedItemId) {
       const bounds = getItemBounds(item);
-      context.strokeStyle = '#3b82f6'; // Accent color
+      context.strokeStyle = '#3b82f6';
       context.lineWidth = 1;
       context.setLineDash([2, 2]);
       context.strokeRect(bounds.x, bounds.y, bounds.width, bounds.height);
-      context.setLineDash([]); // Reset
-      
-      // Draw 4 resize handles
-      if (item.type === 'text' || item.type === 'image') {
-        const hSize = 3;
-        context.fillStyle = '#ffffff';
-        context.strokeStyle = '#000000';
-        context.lineWidth = 1;
-        const drawHandle = (hx, hy) => {
-          context.fillRect(hx - hSize/2, hy - hSize/2, hSize, hSize);
-          context.strokeRect(hx - hSize/2, hy - hSize/2, hSize, hSize);
-        };
-        drawHandle(bounds.x, bounds.y); // top-left
-        drawHandle(bounds.x + bounds.width, bounds.y); // top-right
-        drawHandle(bounds.x, bounds.y + bounds.height); // bottom-left
-        drawHandle(bounds.x + bounds.width, bounds.y + bounds.height); // bottom-right
-      }
+      context.setLineDash([]);
     }
   });
 }
 
 function renderCanvas() {
   if (frames.length === 0) return;
-  drawFrameToContext(ctx, currentFrameIndex, !isPlaying);
+  
+  // 1. Draw logical scene to offscreen backbuffer
+  drawFrameToContext(offCtx, currentFrameIndex, false);
+  
+  // 2. Read logical pixels
+  const imgData = offCtx.getImageData(0, 0, WIDTH, HEIGHT).data;
+  
+  // 3. Clear the high-res display canvas
+  ctx.fillStyle = '#000000'; // Pure black between LEDs
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  
+  // 4. Calculate scaling for dots
+  const scaleX = canvas.width / WIDTH;
+  const scaleY = canvas.height / HEIGHT;
+  const radius = Math.min(scaleX, scaleY) * 0.40; // 40% of cell size to leave a distinct gap
+  
+  // 5. Draw LED dots
+  for (let y = 0; y < HEIGHT; y++) {
+    for (let x = 0; x < WIDTH; x++) {
+      const idx = (y * WIDTH + x) * 4;
+      let r = imgData[idx];
+      let g = imgData[idx+1];
+      let b = imgData[idx+2];
+      
+      // Enhance contrast of "off" LEDs
+      if (r === 5 && g === 5 && b === 5) {
+        r = 15; g = 15; b = 15; // Unused, we check actual rgb from #050505 background
+      }
+      
+      const cx = x * scaleX + scaleX / 2;
+      const cy = y * scaleY + scaleY / 2;
+      
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+      ctx.fill();
+    }
+  }
+  
+  // 6. Draw vector Selection UI on top of the LED grid
+  if (!isPlaying && selectedItemId) {
+    const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
+    if (item) {
+      const bounds = getItemBounds(item); // logical bounds
+      
+      const sx = bounds.x * scaleX;
+      const sy = bounds.y * scaleY;
+      const sw = bounds.width * scaleX;
+      const sh = bounds.height * scaleY;
+      
+      ctx.strokeStyle = '#3b82f6';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 6]);
+      ctx.strokeRect(sx, sy, sw, sh);
+      ctx.setLineDash([]); // Reset
+      
+      // Draw 4 resize handles
+      if (item.type === 'text' || item.type === 'image') {
+        const hSize = 8;
+        ctx.fillStyle = '#ffffff';
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = 2;
+        const drawHandle = (hx, hy) => {
+          ctx.fillRect(hx - hSize/2, hy - hSize/2, hSize, hSize);
+          ctx.strokeRect(hx - hSize/2, hy - hSize/2, hSize, hSize);
+        };
+        drawHandle(sx, sy); // top-left
+        drawHandle(sx + sw, sy); // top-right
+        drawHandle(sx, sy + sh); // bottom-left
+        drawHandle(sx + sw, sy + sh); // bottom-right
+      }
+    }
+  }
 }
 
 function updateTimelineThumb(index) {
