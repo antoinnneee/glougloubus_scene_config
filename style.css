@@ -1,0 +1,275 @@
+:root {
+  --bg-primary: #0f172a;
+  --bg-secondary: #1e293b;
+  --bg-panel: rgba(30, 41, 59, 0.7);
+  --text-main: #f8fafc;
+  --text-muted: #94a3b8;
+  --accent-color: #3b82f6;
+  --accent-hover: #60a5fa;
+  --danger-color: #ef4444;
+  --danger-hover: #f87171;
+  --border-radius: 12px;
+  --led-off: #111;
+  --grid-color: rgba(255, 255, 255, 0.05);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Inter', sans-serif;
+  background-color: var(--bg-primary);
+  color: var(--text-main);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: 1rem;
+  gap: 1rem;
+}
+
+.app-header {
+  text-align: center;
+  padding: 1rem;
+  background: var(--bg-panel);
+  border-radius: var(--border-radius);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255,255,255,0.1);
+  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+}
+
+h1 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  background: linear-gradient(135deg, #60a5fa, #a78bfa);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+h2 {
+  font-size: 1.1rem;
+  margin-bottom: 1rem;
+  color: var(--text-muted);
+}
+
+.main-content {
+  display: flex;
+  flex: 1;
+  gap: 1rem;
+  min-height: 0;
+}
+
+.panel {
+  background: var(--bg-panel);
+  border-radius: var(--border-radius);
+  backdrop-filter: blur(10px);
+  padding: 1.5rem;
+  border: 1px solid rgba(255,255,255,0.1);
+  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+  display: flex;
+  flex-direction: column;
+}
+
+.preview-panel {
+  flex: 2;
+  align-items: center;
+}
+
+.tools-panel {
+  flex: 1;
+  overflow-y: auto;
+}
+
+/* Canvas Styling */
+.canvas-container {
+  position: relative;
+  background-color: var(--led-off);
+  padding: 4px;
+  border-radius: 8px;
+  border: 2px solid var(--bg-secondary);
+  box-shadow: inset 0 0 20px rgba(0,0,0,0.8);
+  margin-bottom: 2rem;
+  /* Maximize width but keep aspect ratio roughly if needed, we'll let CSS scaling handle it via pixelated */
+  width: 100%;
+  max-width: 960px; /* 192 * 5 */
+  aspect-ratio: 192 / 32;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+#led-canvas {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  /* CRITICAL for sharp pixels */
+  image-rendering: pixelated; 
+  background-color: black;
+}
+
+.preview-controls {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+
+/* Inputs & Buttons */
+.btn {
+  background: var(--bg-secondary);
+  color: var(--text-main);
+  border: 1px solid rgba(255,255,255,0.2);
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.btn:hover {
+  background: rgba(255,255,255,0.1);
+}
+
+.btn.primary {
+  background: var(--accent-color);
+  border-color: var(--accent-color);
+}
+.btn.primary:hover { background: var(--accent-hover); }
+
+.btn.danger {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: var(--danger-color);
+  color: #fca5a5;
+}
+.btn.danger:hover { background: var(--danger-color); color: white; }
+
+input[type="number"], input[type="text"], input[type="file"] {
+  background: var(--bg-primary);
+  border: 1px solid rgba(255,255,255,0.2);
+  color: var(--text-main);
+  padding: 0.5rem;
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.9rem;
+}
+
+input[type="color"] {
+  background: transparent;
+  border: none;
+  height: 32px;
+  width: 32px;
+  cursor: pointer;
+}
+
+/* Tools layout */
+.tool-group {
+  background: rgba(0,0,0,0.2);
+  padding: 1rem;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.tool-group h3 {
+  font-size: 0.95rem;
+  color: var(--accent-hover);
+  margin-bottom: 0.25rem;
+}
+
+.tool-controls {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.tool-controls label {
+  font-size: 0.8rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text-muted);
+}
+.tool-controls input[type="number"] {
+  width: 60px;
+}
+
+/* Timeline */
+.timeline-panel {
+  background: var(--bg-panel);
+  border-radius: var(--border-radius);
+  padding: 1rem;
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255,255,255,0.1);
+  display: flex;
+  flex-direction: column;
+  height: 200px;
+}
+
+.timeline-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.timeline-frames {
+  display: flex;
+  gap: 1rem;
+  overflow-x: auto;
+  padding-bottom: 0.5rem;
+  flex: 1;
+}
+
+.timeline-frames::-webkit-scrollbar {
+  height: 8px;
+}
+.timeline-frames::-webkit-scrollbar-thumb {
+  background: var(--bg-secondary);
+  border-radius: 4px;
+}
+
+.frame-thumb-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  min-width: 160px;
+}
+
+.frame-thumb {
+  width: 153.6px; /* 192 * 0.8 */
+  height: 25.6px; /* 32 * 0.8 */
+  background: black;
+  border: 2px solid transparent;
+  border-radius: 4px;
+  image-rendering: pixelated;
+  transition: border-color 0.2s;
+}
+
+.frame-thumb-container.active .frame-thumb {
+  border-color: var(--accent-color);
+  box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+}
+
+.frame-thumb-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+.frame-thumb-container.active .frame-thumb-label {
+  color: var(--accent-color);
+  font-weight: 600;
+}

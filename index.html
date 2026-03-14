@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Glougloubus Scene Configurator</title>
+    <link rel="stylesheet" href="./style.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono&display=swap" rel="stylesheet">
+  </head>
+  <body>
+    <div class="app-container">
+      <header class="app-header">
+        <h1>🚍 Glougloubus Scene Configurator</h1>
+      </header>
+      
+      <main class="main-content">
+        <!-- Preview Panel -->
+        <section class="panel preview-panel">
+          <h2>LED Matrix Preview (192 x 32)</h2>
+          <div class="canvas-container">
+            <!-- The actual canvas is 192x32 logically -->
+            <canvas id="led-canvas" width="192" height="32"></canvas>
+            <div class="canvas-grid-overlay"></div>
+          </div>
+          <div class="preview-controls">
+            <button id="btn-play-pause" class="btn primary">Play</button>
+            <div class="fps-control">
+              <label for="fps-input">FPS:</label>
+              <input type="number" id="fps-input" value="20" min="1" max="60" />
+            </div>
+            <button id="btn-clear-canvas" class="btn outline danger">Clear Frame</button>
+          </div>
+        </section>
+
+        <!-- Tools / Properties Panel -->
+        <section class="panel tools-panel">
+          <h2>Tools</h2>
+          
+          <div class="tool-group">
+            <h3>Image Import</h3>
+            <input type="file" id="image-upload" accept="image/*" />
+            <div class="tool-controls">
+              <label>X Ofs: <input type="number" id="img-x" value="0"></label>
+              <label>Y Ofs: <input type="number" id="img-y" value="0"></label>
+              <label>Scale: <input type="number" id="img-scale" value="1.0" step="0.1" min="0.1"></label>
+            </div>
+            <button id="btn-apply-image" class="btn">Apply to Canvas</button>
+          </div>
+
+          <div class="tool-group">
+            <h3>Text Tool</h3>
+            <input type="text" id="text-input" placeholder="Enter text..." />
+            <div class="tool-controls">
+              <label>Color: <input type="color" id="text-color" value="#ffffff"></label>
+              <label>Size: <input type="number" id="text-size" value="16" min="8" max="32"></label>
+            </div>
+            <div class="tool-controls">
+              <label>X: <input type="number" id="text-x" value="0"></label>
+              <label>Y: <input type="number" id="text-y" value="16"></label>
+            </div>
+            <button id="btn-apply-text" class="btn">Draw Text</button>
+          </div>
+
+          <div class="tool-group">
+            <h3>Text Animation Generator</h3>
+            <p class="helper-text">Generates frames to scroll text right-to-left.</p>
+            <button id="btn-generate-anim" class="btn secondary">Generate Scroll</button>
+          </div>
+        </section>
+      </main>
+
+      <!-- Bottom Timeline Panel -->
+      <section class="timeline-panel">
+        <div class="timeline-header">
+          <h2>Frames</h2>
+          <div class="timeline-actions">
+            <button id="btn-add-frame" class="btn">Add Frame</button>
+            <button id="btn-dup-frame" class="btn">Duplicate Frame</button>
+            <button id="btn-del-frame" class="btn danger">Delete Frame</button>
+          </div>
+        </div>
+        <div class="timeline-frames" id="timeline-container">
+          <!-- Frame thumbnails will be generated here -->
+        </div>
+      </section>
+    </div>
+    
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>
