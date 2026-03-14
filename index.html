@@ -77,18 +77,25 @@
           </div>
 
           <div class="tool-group">
-            <h3>Item Animation Generator</h3>
-            <p class="helper-text">Select an item, then configure translation direction and speed to generate scrolling frames.</p>
+            <p class="helper-text" style="font-size:0.8rem; margin-bottom:0.5rem; color: #94a3b8;">Select an item. Set its Start and End positions, then generate frames.</p>
+            <div class="tool-controls" style="margin-bottom: 0.25rem;">
+              <button id="btn-anim-set-start" class="btn outline" style="flex:1; padding: 0.25rem;">Set Start to Current</button>
+              <label>X: <input type="number" id="anim-start-x" value="0" style="width:50px"></label>
+              <label>Y: <input type="number" id="anim-start-y" value="0" style="width:50px"></label>
+            </div>
             <div class="tool-controls" style="margin-bottom: 0.5rem;">
-              <label>Dir: 
-                <select id="anim-dir">
-                  <option value="left">Left</option>
-                  <option value="right">Right</option>
-                  <option value="up">Up</option>
-                  <option value="down">Down</option>
+              <button id="btn-anim-set-end" class="btn outline" style="flex:1; padding: 0.25rem;">Set End to Current</button>
+              <label>X: <input type="number" id="anim-end-x" value="100" style="width:50px"></label>
+              <label>Y: <input type="number" id="anim-end-y" value="0" style="width:50px"></label>
+            </div>
+            <div class="tool-controls" style="margin-bottom: 0.5rem;">
+              <label>Mode: 
+                <select id="anim-mode">
+                  <option value="duration">Frames (Duration)</option>
+                  <option value="speed">px/frame (Speed)</option>
                 </select>
               </label>
-              <label>Speed (px): <input type="number" id="anim-speed" value="2" min="1"></label>
+              <label>Value: <input type="number" id="anim-value" value="20" min="1" style="width:60px"></label>
             </div>
             <button id="btn-generate-anim" class="btn secondary">Generate Anim Frames</button>
           </div>

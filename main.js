@@ -34,8 +34,15 @@ const btnDeleteItem = document.getElementById('btn-delete-item');
 const btnTogglePencil = document.getElementById('btn-toggle-pencil');
 const pencilColor = document.getElementById('pencil-color');
 
-const animDir = document.getElementById('anim-dir');
-const animSpeed = document.getElementById('anim-speed');
+// Animation
+const animStartX = document.getElementById('anim-start-x');
+const animStartY = document.getElementById('anim-start-y');
+const animEndX = document.getElementById('anim-end-x');
+const animEndY = document.getElementById('anim-end-y');
+const animMode = document.getElementById('anim-mode');
+const animValue = document.getElementById('anim-value');
+const btnAnimSetStart = document.getElementById('btn-anim-set-start');
+const btnAnimSetEnd = document.getElementById('btn-anim-set-end');
 const btnGenerateAnim = document.getElementById('btn-generate-anim');
 
 // --- State ---
@@ -128,6 +135,26 @@ function init() {
   btnApplyImage.addEventListener('click', applyImageTool);
   btnApplyText.addEventListener('click', applyTextTool);
   btnGenerateAnim.addEventListener('click', generateAnimation);
+  
+  btnAnimSetStart.addEventListener('click', () => {
+    if (selectedItemId) {
+      const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
+      if (item) {
+        animStartX.value = item.x;
+        animStartY.value = item.y;
+      }
+    }
+  });
+  
+  btnAnimSetEnd.addEventListener('click', () => {
+    if (selectedItemId) {
+      const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
+      if (item) {
+        animEndX.value = item.x;
+        animEndY.value = item.y;
+      }
+    }
+  });
   
   btnDeleteItem.addEventListener('click', deleteSelectedItem);
   btnTogglePencil.addEventListener('click', togglePencilMode);
@@ -752,65 +779,84 @@ async function generateAnimation() {
   const selectedItem = frames[currentFrameIndex].find(i => i.id === selectedItemId);
   if (!selectedItem) return;
 
-  const dir = animDir.value;
-  const speed = parseInt(animSpeed.value) || 2;
-  const bounds = getItemBounds(selectedItem);
+  const startX = parseInt(animStartX.value) || 0;
+  const startY = parseInt(animStartY.value) || 0;
+  const endX = parseInt(animEndX.value) || 0;
+  const endY = parseInt(animEndY.value) || 0;
+  const mode = animMode.value; // 'duration' or 'speed'
+  const val = parseInt(animValue.value) || 1;
   
-  let steps = 0;
-  if (dir === 'left') {
-    steps = Math.ceil((bounds.x + bounds.width) / speed);
-  } else if (dir === 'right') {
-    steps = Math.ceil((WIDTH - bounds.x) / speed);
-  } else if (dir === 'up') {
-    steps = Math.ceil((bounds.y + bounds.height) / speed);
-  } else if (dir === 'down') {
-    steps = Math.ceil((HEIGHT - bounds.y) / speed);
+  const dx = endX - startX;
+  const dy = endY - startY;
+  const distance = Math.sqrt(dx * dx + dy * dy);
+  
+  let steps = 1;
+  if (mode === 'duration') {
+     steps = val;
+  } else if (mode === 'speed') {
+     steps = Math.max(1, Math.ceil(distance / val));
   }
-  
-  if (steps <= 0) steps = 20; // Failsafe if completely offscreen
   
   const confirmed = await showModal(
     "Confirm Generation", 
-    `This will append ${steps} frames to animate the item ${dir}wards at ${speed}px/frame. Proceed?`, 
+    `This will generate ${steps} frames interpolating from (${startX},${startY}) to (${endX},${endY}). Existing frames will be updated. Proceed?`, 
     true
   );
   if (!confirmed) return;
 
-  let currentX = selectedItem.x;
-  let currentY = selectedItem.y;
+  // Base frame to clone if we need to append new frames (clone without the animated item to form a background)
+  const baseFrame = frames[currentFrameIndex].filter(i => i.id !== selectedItemId);
   
   for(let i = 0; i < steps; i++) {
-    if (dir === 'left') currentX -= speed;
-    else if (dir === 'right') currentX += speed;
-    else if (dir === 'up') currentY -= speed;
-    else if (dir === 'down') currentY += speed;
+    const t = steps > 1 ? (i / (steps - 1)) : 1; 
+    const currentX = Math.round(startX + dx * t);
+    const currentY = Math.round(startY + dy * t);
     
     // Duplicate item properties
     let newItem = JSON.parse(JSON.stringify(selectedItem));
-    newItem.id = generateId();
     newItem.x = currentX;
     newItem.y = currentY;
     
     // Re-attach HTML element references that JSON.stringify strips out
-    if (selectedItem.type === 'image') {
-       newItem.img = selectedItem.img;
-    }
+    if (selectedItem.type === 'image') newItem.img = selectedItem.img;
     
     // Recalculate inner points for drawings
     if (selectedItem.type === 'drawing') {
-      const dx = currentX - selectedItem.x;
-      const dy = currentY - selectedItem.y;
-      newItem.points = selectedItem.points.map(pt => ({ x: pt.x + dx, y: pt.y + dy }));
+      const offsetX = currentX - selectedItem.x;
+      const offsetY = currentY - selectedItem.y;
+      newItem.points = selectedItem.points.map(pt => ({ x: pt.x + offsetX, y: pt.y + offsetY }));
       if (selectedItem.originalPoints) {
-         newItem.originalPoints = selectedItem.originalPoints.map(opt => ({ x: opt.x + dx, y: opt.y + dy }));
+         newItem.originalPoints = selectedItem.originalPoints.map(opt => ({ x: opt.x + offsetX, y: opt.y + offsetY }));
       }
     }
     
-    frames.push([newItem]); 
+    const targetFrameIndex = currentFrameIndex + i; // Merge starting from current frame
+    
+    if (targetFrameIndex >= frames.length) {
+       // Create a new frame appending the newly positioned item to the frozen background
+       const newFrame = JSON.parse(JSON.stringify(baseFrame));
+       // Fix image refs for background items
+       newFrame.forEach(item => {
+           if (item.type === 'image') {
+              const srcItem = baseFrame.find(b => b.id === item.id);
+              if (srcItem) item.img = srcItem.img;
+           }
+       });
+       newFrame.push(newItem);
+       frames.push(newFrame);
+    } else {
+       // Overwrite the existing item in this target frame, or push it if it doesn't exist yet
+       const existingItemIndex = frames[targetFrameIndex].findIndex(k => k.id === selectedItemId);
+       if (existingItemIndex > -1) {
+          frames[targetFrameIndex][existingItemIndex] = newItem;
+       } else {
+          frames[targetFrameIndex].push(newItem);
+       }
+    }
   }
   
   updateUI();
-  showModal("Success", `Added ${steps} frames.`, false);
+  showModal("Success", `Generated ${steps} animation frames starting from frame ${currentFrameIndex + 1}.`, false);
 }
 
 // Run
