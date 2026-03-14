@@ -40,6 +40,8 @@ const animStartX = document.getElementById('anim-start-x');
 const animStartY = document.getElementById('anim-start-y');
 const animEndX = document.getElementById('anim-end-x');
 const animEndY = document.getElementById('anim-end-y');
+const animStartColor = document.getElementById('anim-start-color');
+const animEndColor = document.getElementById('anim-end-color');
 const animMode = document.getElementById('anim-mode');
 const animValue = document.getElementById('anim-value');
 const btnAnimSetStart = document.getElementById('btn-anim-set-start');
@@ -145,6 +147,7 @@ function init() {
       if (item) {
         animStartX.value = item.x;
         animStartY.value = item.y;
+        if (item.color) animStartColor.value = item.color;
       }
     }
   });
@@ -155,6 +158,7 @@ function init() {
       if (item) {
         animEndX.value = item.x;
         animEndY.value = item.y;
+        if (item.color) animEndColor.value = item.color;
       }
     }
   });
@@ -165,6 +169,7 @@ function init() {
       if (item) {
         item.x = parseInt(animStartX.value) || 0;
         item.y = parseInt(animStartY.value) || 0;
+        item.color = animStartColor.value;
         renderCanvas();
         updateTimelineThumb(currentFrameIndex);
         populatePropertiesPanel(item);
@@ -178,6 +183,7 @@ function init() {
       if (item) {
         item.x = parseInt(animEndX.value) || 0;
         item.y = parseInt(animEndY.value) || 0;
+        item.color = animEndColor.value;
         renderCanvas();
         updateTimelineThumb(currentFrameIndex);
         populatePropertiesPanel(item);
@@ -819,6 +825,26 @@ async function generateAnimation() {
   const startY = parseInt(animStartY.value) || 0;
   const endX = parseInt(animEndX.value) || 0;
   const endY = parseInt(animEndY.value) || 0;
+  
+  const startCol = animStartColor.value;
+  const endCol = animEndColor.value;
+
+  const hexToRgb = (hex) => {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result ? {
+      r: parseInt(result[1], 16),
+      g: parseInt(result[2], 16),
+      b: parseInt(result[3], 16)
+    } : { r: 255, g: 255, b: 255 };
+  };
+
+  const rgbToHex = (r, g, b) => {
+    return "#" + ((1 << 24) + (Math.round(r) << 16) + (Math.round(g) << 8) + Math.round(b)).toString(16).slice(1);
+  };
+
+  const c1 = hexToRgb(startCol);
+  const c2 = hexToRgb(endCol);
+
   const mode = animMode.value; // 'duration' or 'speed'
   const val = parseInt(animValue.value) || 1;
   
@@ -835,7 +861,7 @@ async function generateAnimation() {
   
   const confirmed = await showModal(
     "Confirm Generation", 
-    `This will generate ${steps} frames interpolating from (${startX},${startY}) to (${endX},${endY}). Existing frames will be updated. Proceed?`, 
+    `This will generate ${steps} frames interpolating from (${startX},${startY}) to (${endX},${endY}) with color transition. Existing frames will be updated. Proceed?`, 
     true
   );
   if (!confirmed) return;
@@ -848,10 +874,16 @@ async function generateAnimation() {
     const currentX = Math.round(startX + dx * t);
     const currentY = Math.round(startY + dy * t);
     
+    const curR = c1.r + (c2.r - c1.r) * t;
+    const curG = c1.g + (c2.g - c1.g) * t;
+    const curB = c1.b + (c2.b - c1.b) * t;
+    const currentColor = rgbToHex(curR, curG, curB);
+    
     // Duplicate item properties
     let newItem = JSON.parse(JSON.stringify(selectedItem));
     newItem.x = currentX;
     newItem.y = currentY;
+    newItem.color = currentColor;
     
     // Re-attach HTML element references that JSON.stringify strips out
     if (selectedItem.type === 'image') newItem.img = selectedItem.img;
