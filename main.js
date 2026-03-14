@@ -31,22 +31,66 @@ const btnApplyText = document.getElementById('btn-apply-text');
 const btnGenerateAnim = document.getElementById('btn-generate-anim');
 
 // --- State ---
+// A frame is now an ARRAY of objects: { id, type, x, y, ...specificProps }
 let frames = [];
 let currentFrameIndex = 0;
 let isPlaying = false;
 let fps = 20;
 let playInterval = null;
 
-// Offscreen canvas for tools
+// Object Selection State
+let selectedItemId = null;
+let isDragging = false;
+let dragStartX = 0;
+let dragStartY = 0;
+let itemStartX = 0;
+let itemStartY = 0;
+
+// Offscreen canvas for thumbnail generation and hit testing text measurement
 const offCanvas = document.createElement('canvas');
 offCanvas.width = WIDTH;
 offCanvas.height = HEIGHT;
 const offCtx = offCanvas.getContext('2d', { willReadFrequently: true });
 
+// --- Utils ---
+function generateId() {
+  return Math.random().toString(36).substring(2, 9);
+}
+
+// --- Custom Modal ---
+const customModal = document.getElementById('custom-modal');
+const modalTitle = document.getElementById('modal-title');
+const modalMessage = document.getElementById('modal-message');
+const modalBtnConfirm = document.getElementById('modal-btn-confirm');
+const modalBtnCancel = document.getElementById('modal-btn-cancel');
+
+function showModal(title, message, showCancel = false) {
+  return new Promise((resolve) => {
+    modalTitle.innerText = title;
+    modalMessage.innerText = message;
+    
+    modalBtnCancel.style.display = showCancel ? 'block' : 'none';
+    
+    const onConfirm = () => { cleanup(); resolve(true); };
+    const onCancel = () => { cleanup(); resolve(false); };
+    
+    function cleanup() {
+      modalBtnConfirm.removeEventListener('click', onConfirm);
+      modalBtnCancel.removeEventListener('click', onCancel);
+      customModal.close();
+    }
+    
+    modalBtnConfirm.addEventListener('click', onConfirm);
+    modalBtnCancel.addEventListener('click', onCancel);
+    
+    customModal.showModal();
+  });
+}
+
 // --- Initialization ---
 function init() {
   // Start with one blank frame
-  frames.push(createBlankFrame());
+  frames.push([]);
   updateUI();
 
   // Event Listeners
@@ -58,41 +102,230 @@ function init() {
   btnPlayPause.addEventListener('click', togglePlay);
   inputFps.addEventListener('change', (e) => { fps = parseInt(e.target.value) || 20; if(isPlaying) { stop(); play(); } });
 
+  // Update button texts
+  btnApplyImage.innerText = "Add Image";
+  btnApplyText.innerText = "Add Text";
   btnApplyImage.addEventListener('click', applyImageTool);
   btnApplyText.addEventListener('click', applyTextTool);
   btnGenerateAnim.addEventListener('click', generateTextAnimation);
+
+  // Mouse/Touch Events for Dragging
+  canvas.addEventListener('mousedown', handleMouseDown);
+  window.addEventListener('mousemove', handleMouseMove); // Window to handle dragging out of bounds
+  window.addEventListener('mouseup', handleMouseUp);
+  
+  // Property changes live update the selected item
+  textInput.addEventListener('input', updateSelectedItemProperties);
+  textColor.addEventListener('input', updateSelectedItemProperties);
+  textSize.addEventListener('input', updateSelectedItemProperties);
+  textX.addEventListener('input', updateSelectedItemProperties);
+  textY.addEventListener('input', updateSelectedItemProperties);
+  
+  imgX.addEventListener('input', updateSelectedItemProperties);
+  imgY.addEventListener('input', updateSelectedItemProperties);
+  imgScale.addEventListener('input', updateSelectedItemProperties);
 }
 
-// --- Core Logic ---
-function createBlankFrame() {
-  const imgData = new ImageData(WIDTH, HEIGHT);
-  // Fill with black
-  for (let i = 0; i < imgData.data.length; i += 4) {
-    imgData.data[i] = 0;     // R
-    imgData.data[i+1] = 0;   // G
-    imgData.data[i+2] = 0;   // B
-    imgData.data[i+3] = 255; // A
+// --- Interaction Logic ---
+function getCanvasCoords(event) {
+  const rect = canvas.getBoundingClientRect();
+  // Map CSS coordinates to logic (192x32) coordinates
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  return {
+    x: (event.clientX - rect.left) * scaleX,
+    y: (event.clientY - rect.top) * scaleY
+  };
+}
+
+function handleMouseDown(e) {
+  if (isPlaying) return;
+  const { x, y } = getCanvasCoords(e);
+  
+  const hitItem = findItemAtCoord(x, y);
+  
+  if (hitItem) {
+    selectedItemId = hitItem.id;
+    isDragging = true;
+    dragStartX = x;
+    dragStartY = y;
+    itemStartX = hitItem.x;
+    itemStartY = hitItem.y;
+    
+    // Populate properties panel with selected item data
+    populatePropertiesPanel(hitItem);
+  } else {
+    selectedItemId = null;
   }
-  return imgData;
+  
+  renderCanvas();
 }
 
+function handleMouseMove(e) {
+  if (!isDragging || !selectedItemId) return;
+  
+  const { x, y } = getCanvasCoords(e);
+  const dx = x - dragStartX;
+  const dy = y - dragStartY;
+  
+  const frameItems = frames[currentFrameIndex];
+  const item = frameItems.find(i => i.id === selectedItemId);
+  if (item) {
+    item.x = Math.round(itemStartX + dx);
+    item.y = Math.round(itemStartY + dy);
+    
+    // Sync UI inputs with dragging
+    if (item.type === 'text') {
+      textX.value = item.x;
+      textY.value = item.y;
+    } else if (item.type === 'image') {
+      imgX.value = item.x;
+      imgY.value = item.y;
+    }
+  }
+  
+  renderCanvas();
+}
+
+function handleMouseUp(e) {
+  isDragging = false;
+  
+  // Re-render to finalize active bounds etc if needed
+  if (selectedItemId) {
+    renderCanvas();
+    updateTimelineThumb(currentFrameIndex); 
+  }
+}
+
+function findItemAtCoord(cx, cy) {
+  const frameItems = frames[currentFrameIndex];
+  // Iterate backwards to hit-test top-most items first
+  for (let i = frameItems.length - 1; i >= 0; i--) {
+    const item = frameItems[i];
+    const bounds = getItemBounds(item);
+    if (cx >= bounds.x && cx <= bounds.x + bounds.width &&
+        cy >= bounds.y && cy <= bounds.y + bounds.height) {
+      return item;
+    }
+  }
+  return null;
+}
+
+function getItemBounds(item) {
+  if (item.type === 'text') {
+    offCtx.font = `${item.size}px "JetBrains Mono", monospace`;
+    offCtx.textBaseline = 'middle';
+    const metrics = offCtx.measureText(item.text);
+    // Approximate bounding box for text
+    const height = item.size;
+    return {
+      x: item.x,
+      y: item.y - height/2,
+      width: metrics.width,
+      height: height
+    };
+  } else if (item.type === 'image') {
+    return {
+      x: item.x,
+      y: item.y,
+      width: item.img.width * item.scale,
+      height: item.img.height * item.scale
+    };
+  }
+  return { x:0, y:0, width:0, height:0 };
+}
+
+function populatePropertiesPanel(item) {
+  if (item.type === 'text') {
+    textInput.value = item.text;
+    textColor.value = item.color;
+    textSize.value = item.size;
+    textX.value = item.x;
+    textY.value = item.y;
+  } else if (item.type === 'image') {
+    imgX.value = item.x;
+    imgY.value = item.y;
+    imgScale.value = item.scale;
+  }
+}
+
+function updateSelectedItemProperties(e) {
+  if (!selectedItemId) return;
+  const frameItems = frames[currentFrameIndex];
+  const item = frameItems.find(i => i.id === selectedItemId);
+  if (!item) return;
+
+  if (item.type === 'text') {
+    item.text = textInput.value;
+    item.color = textColor.value;
+    item.size = parseInt(textSize.value) || 16;
+    item.x = parseInt(textX.value) || 0;
+    item.y = parseInt(textY.value) || 16;
+  } else if (item.type === 'image') {
+    item.x = parseInt(imgX.value) || 0;
+    item.y = parseInt(imgY.value) || 0;
+    item.scale = parseFloat(imgScale.value) || 1.0;
+  }
+  
+  renderCanvas();
+  updateTimelineThumb(currentFrameIndex);
+}
+
+// --- Core Rendering ---
 function updateUI() {
   if (currentFrameIndex >= frames.length) currentFrameIndex = frames.length - 1;
   if (currentFrameIndex < 0 && frames.length > 0) currentFrameIndex = 0;
-
+  selectedItemId = null; // deselect on frame change
   renderCanvas();
   renderTimeline();
 }
 
+function drawFrameToContext(context, frameIndex, drawActiveSelectionBox = false) {
+  const items = frames[frameIndex] || [];
+  
+  // Clear context
+  context.fillStyle = 'black';
+  context.fillRect(0, 0, WIDTH, HEIGHT);
+
+  // Draw items
+  items.forEach(item => {
+    if (item.type === 'text') {
+      context.fillStyle = item.color;
+      context.font = `${item.size}px "JetBrains Mono", monospace`;
+      context.textBaseline = 'middle';
+      context.fillText(item.text, item.x, item.y);
+    } else if (item.type === 'image') {
+      context.drawImage(item.img, item.x, item.y, item.img.width * item.scale, item.img.height * item.scale);
+    }
+    
+    // Draw Selection Box
+    if (drawActiveSelectionBox && item.id === selectedItemId) {
+      const bounds = getItemBounds(item);
+      context.strokeStyle = '#3b82f6'; // Accent color
+      context.lineWidth = 1;
+      context.setLineDash([2, 2]);
+      context.strokeRect(bounds.x, bounds.y, bounds.width, bounds.height);
+      context.setLineDash([]); // Reset
+    }
+  });
+}
+
 function renderCanvas() {
   if (frames.length === 0) return;
-  const frame = frames[currentFrameIndex];
-  ctx.putImageData(frame, 0, 0);
+  drawFrameToContext(ctx, currentFrameIndex, !isPlaying);
+}
+
+function updateTimelineThumb(index) {
+  const thumbs = timelineContainer.querySelectorAll('.frame-thumb');
+  if (thumbs[index]) {
+    const thumbCtx = thumbs[index].getContext('2d');
+    drawFrameToContext(thumbCtx, index, false);
+  }
 }
 
 function renderTimeline() {
   timelineContainer.innerHTML = '';
-  frames.forEach((frameData, index) => {
+  frames.forEach((_, index) => {
     const container = document.createElement('div');
     container.className = `frame-thumb-container ${index === currentFrameIndex ? 'active' : ''}`;
     container.onclick = () => {
@@ -105,7 +338,7 @@ function renderTimeline() {
     thumbCanvas.className = 'frame-thumb';
     thumbCanvas.width = WIDTH;
     thumbCanvas.height = HEIGHT;
-    thumbCanvas.getContext('2d').putImageData(frameData, 0, 0);
+    drawFrameToContext(thumbCanvas.getContext('2d'), index, false);
 
     const label = document.createElement('div');
     label.className = 'frame-thumb-label';
@@ -119,29 +352,37 @@ function renderTimeline() {
 
 // --- Frame Management ---
 function addFrame() {
-  frames.push(createBlankFrame());
+  frames.push([]);
   currentFrameIndex = frames.length - 1;
   updateUI();
 }
 
 function duplicateFrame() {
   if (frames.length === 0) return;
-  const current = frames[currentFrameIndex];
-  const copy = new ImageData(new Uint8ClampedArray(current.data), WIDTH, HEIGHT);
-  frames.splice(currentFrameIndex + 1, 0, copy);
+  const currentItems = frames[currentFrameIndex];
+  
+  // Deep clone items but preserve image references properly
+  const copyItems = currentItems.map(item => {
+    return { ...item, id: generateId() }; 
+  });
+  
+  frames.splice(currentFrameIndex + 1, 0, copyItems);
   currentFrameIndex++;
   updateUI();
 }
 
 function deleteFrame() {
-  if (frames.length <= 1) return;
-  frames.splice(currentFrameIndex, 1);
+  if (frames.length <= 1) {
+    frames[0] = []; // Just clear if it's the last one
+  } else {
+    frames.splice(currentFrameIndex, 1);
+  }
   updateUI();
 }
 
 function clearCurrentFrame() {
   if (frames.length === 0) return;
-  frames[currentFrameIndex] = createBlankFrame();
+  frames[currentFrameIndex] = [];
   updateUI();
 }
 
@@ -156,6 +397,7 @@ function togglePlay() {
 
 function play() {
   if (frames.length <= 1) return;
+  selectedItemId = null; // Hide selection boxes during playback
   isPlaying = true;
   btnPlayPause.innerText = 'Pause';
   btnPlayPause.classList.remove('primary');
@@ -163,7 +405,6 @@ function play() {
   playInterval = setInterval(() => {
     currentFrameIndex = (currentFrameIndex + 1) % frames.length;
     renderCanvas();
-    // Highlight timeline without full re-render for performance
     const thumbs = document.querySelectorAll('.frame-thumb-container');
     thumbs.forEach((t, i) => t.classList.toggle('active', i === currentFrameIndex));
   }, 1000 / fps);
@@ -177,11 +418,11 @@ function stop() {
   updateUI();
 }
 
-// --- Tools ---
+// --- Tools (Object Addition) ---
 function applyImageTool() {
   const file = imgUpload.files[0];
   if (!file) {
-    alert("Please select an image first.");
+    showModal("Notice", "Please select an image first.", false);
     return;
   }
   
@@ -193,15 +434,18 @@ function applyImageTool() {
   reader.onload = (e) => {
     const img = new Image();
     img.onload = () => {
-      // Draw current frame to offcanvas preserving background
-      offCtx.putImageData(frames[currentFrameIndex], 0, 0);
-      
-      // Draw new image on top
-      offCtx.drawImage(img, x, y, img.width * scale, img.height * scale);
-      
-      // Save back
-      frames[currentFrameIndex] = offCtx.getImageData(0, 0, WIDTH, HEIGHT);
-      updateUI();
+      const newItem = {
+        id: generateId(),
+        type: 'image',
+        img: img,
+        x: x,
+        y: y,
+        scale: scale
+      };
+      frames[currentFrameIndex].push(newItem);
+      selectedItemId = newItem.id;
+      renderCanvas();
+      updateTimelineThumb(currentFrameIndex);
     };
     img.src = e.target.result;
   };
@@ -217,23 +461,27 @@ function applyTextTool() {
   const x = parseInt(textX.value) || 0;
   const y = parseInt(textY.value) || 16;
 
-  // Restore current to offcanvas
-  offCtx.putImageData(frames[currentFrameIndex], 0, 0);
+  const newItem = {
+    id: generateId(),
+    type: 'text',
+    text: text,
+    color: color,
+    size: size,
+    x: x,
+    y: y
+  };
   
-  offCtx.fillStyle = color;
-  offCtx.font = `${size}px "JetBrains Mono", monospace`;
-  offCtx.textBaseline = 'middle';
-  offCtx.fillText(text, x, y);
-
-  frames[currentFrameIndex] = offCtx.getImageData(0, 0, WIDTH, HEIGHT);
-  updateUI();
+  frames[currentFrameIndex].push(newItem);
+  selectedItemId = newItem.id;
+  renderCanvas();
+  updateTimelineThumb(currentFrameIndex);
 }
 
-// Generate a scrolling text animation from right to left
-function generateTextAnimation() {
+// Generate a scrolling text animation from right to left using objects
+async function generateTextAnimation() {
   const text = textInput.value;
   if (!text) {
-    alert("Please enter some text in the text tool first.");
+    showModal("Notice", "Please enter some text in the text tool first.", false);
     return;
   }
 
@@ -249,24 +497,28 @@ function generateTextAnimation() {
   // Start from right edge
   let currentX = WIDTH;
   const targetX = -textWidth;
-  const steps = WIDTH + textWidth; // Complete scroll
+  const steps = WIDTH + textWidth;
   
-  if (!confirm(`This will append ${steps} frames to the timeline. Proceed?`)) return;
+  const confirmed = await showModal("Confirm Generation", `This will append ${Math.ceil(steps/2)} frames to the timeline. Proceed?`, true);
+  if (!confirmed) return;
 
-  for(let i=0; i<steps; i+=2) { // step by 2 pixels for speed
-    const frame = createBlankFrame();
-    offCtx.putImageData(frame, 0, 0);
-    offCtx.fillStyle = color;
-    offCtx.font = `${size}px "JetBrains Mono", monospace`;
-    offCtx.textBaseline = 'middle';
-    offCtx.fillText(text, currentX, y);
+  for(let i=0; i<steps; i+=2) {
+    const newItem = {
+      id: generateId(),
+      type: 'text',
+      text: text,
+      color: color,
+      size: size,
+      x: currentX,
+      y: y
+    };
     
-    frames.push(offCtx.getImageData(0, 0, WIDTH, HEIGHT));
+    frames.push([newItem]); // Create new frame with just this object
     currentX -= 2;
   }
   
   updateUI();
-  alert(`Added ${Math.ceil(steps/2)} frames.`);
+  showModal("Success", `Added ${Math.ceil(steps/2)} frames.`, false);
 }
 
 // Run
