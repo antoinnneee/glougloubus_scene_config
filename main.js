@@ -26,6 +26,7 @@ const textColor = document.getElementById('text-color');
 const textSize = document.getElementById('text-size');
 const textX = document.getElementById('text-x');
 const textY = document.getElementById('text-y');
+const textFont = document.getElementById('text-font');
 const btnApplyText = document.getElementById('btn-apply-text');
 
 const selectionTools = document.getElementById('selection-tools');
@@ -43,6 +44,8 @@ const animMode = document.getElementById('anim-mode');
 const animValue = document.getElementById('anim-value');
 const btnAnimSetStart = document.getElementById('btn-anim-set-start');
 const btnAnimSetEnd = document.getElementById('btn-anim-set-end');
+const btnAnimApplyStart = document.getElementById('btn-anim-apply-start');
+const btnAnimApplyEnd = document.getElementById('btn-anim-apply-end');
 const btnGenerateAnim = document.getElementById('btn-generate-anim');
 
 // --- State ---
@@ -155,6 +158,32 @@ function init() {
       }
     }
   });
+
+  btnAnimApplyStart.addEventListener('click', () => {
+    if (selectedItemId) {
+      const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
+      if (item) {
+        item.x = parseInt(animStartX.value) || 0;
+        item.y = parseInt(animStartY.value) || 0;
+        renderCanvas();
+        updateTimelineThumb(currentFrameIndex);
+        populatePropertiesPanel(item);
+      }
+    }
+  });
+
+  btnAnimApplyEnd.addEventListener('click', () => {
+    if (selectedItemId) {
+      const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
+      if (item) {
+        item.x = parseInt(animEndX.value) || 0;
+        item.y = parseInt(animEndY.value) || 0;
+        renderCanvas();
+        updateTimelineThumb(currentFrameIndex);
+        populatePropertiesPanel(item);
+      }
+    }
+  });
   
   btnDeleteItem.addEventListener('click', deleteSelectedItem);
   btnTogglePencil.addEventListener('click', togglePencilMode);
@@ -183,6 +212,7 @@ function init() {
   textSize.addEventListener('input', updateSelectedItemProperties);
   textX.addEventListener('input', updateSelectedItemProperties);
   textY.addEventListener('input', updateSelectedItemProperties);
+  textFont.addEventListener('input', updateSelectedItemProperties);
   
   imgX.addEventListener('input', updateSelectedItemProperties);
   imgY.addEventListener('input', updateSelectedItemProperties);
@@ -210,7 +240,7 @@ function handleMouseDown(e) {
     const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
     if (item && (item.type === 'text' || item.type === 'image')) {
       const bounds = getItemBounds(item);
-      const hHit = 4; // hit radius
+      const hHit = 6; // slightly larger hit radius (in logical pixels)
       const isHit = (hx, hy) => Math.abs(x - hx) <= hHit && Math.abs(y - hy) <= hHit;
       
       if (isHit(bounds.x + bounds.width, bounds.y + bounds.height)) resizeHandle = 'br';
@@ -289,16 +319,16 @@ function handleMouseMove(e) {
        if (currentWidth < 2) currentWidth = 2; // Math.max(1) for scale division safety
        
        if (item.type === 'text') {
-          item.size = Math.max(4, Math.round(resizeStartSize * (currentWidth / Math.max(1, resizeStartWidth))));
+          item.size = Math.max(1, Math.round(resizeStartSize * (currentWidth / Math.max(1, resizeStartWidth))));
           textSize.value = item.size;
+          textX.value = item.x; 
+          textY.value = item.y;
        } else if (item.type === 'image') {
           item.scale = Math.max(0.01, resizeStartScale * (currentWidth / Math.max(1, resizeStartWidth)));
           imgScale.value = item.scale.toFixed(2);
+          imgX.value = item.x; 
+          imgY.value = item.y;
        }
-       
-       // Sync coordinate fields
-       if (item.type === 'text') {textX.value = item.x; textY.value = item.y;} 
-       else {imgX.value = item.x; imgY.value = item.y;}
        
        renderCanvas();
     }
@@ -375,7 +405,8 @@ function findItemAtCoord(cx, cy) {
 
 function getItemBounds(item) {
   if (item.type === 'text') {
-    offCtx.font = `${item.size}px "JetBrains Mono", monospace`;
+    const font = item.font || '"JetBrains Mono", monospace';
+    offCtx.font = `${item.size}px ${font}`;
     offCtx.textBaseline = 'middle';
     const metrics = offCtx.measureText(item.text);
     // Approximate bounding box for text
@@ -415,6 +446,7 @@ function populatePropertiesPanel(item) {
     textSize.value = item.size;
     textX.value = item.x;
     textY.value = item.y;
+    textFont.value = item.font || '"JetBrains Mono", monospace';
   } else if (item.type === 'image') {
     imgX.value = item.x;
     imgY.value = item.y;
@@ -434,6 +466,7 @@ function updateSelectedItemProperties(e) {
     item.size = parseInt(textSize.value) || 16;
     item.x = parseInt(textX.value) || 0;
     item.y = parseInt(textY.value) || 16;
+    item.font = textFont.value;
   } else if (item.type === 'image') {
     item.x = parseInt(imgX.value) || 0;
     item.y = parseInt(imgY.value) || 0;
@@ -500,7 +533,8 @@ function drawFrameToContext(context, frameIndex, drawActiveSelectionBox = false)
   items.forEach(item => {
     if (item.type === 'text') {
       context.fillStyle = item.color;
-      context.font = `${item.size}px "JetBrains Mono", monospace`;
+      const font = item.font || '"JetBrains Mono", monospace';
+      context.font = `${item.size}px ${font}`;
       context.textBaseline = 'middle';
       context.fillText(item.text, item.x, item.y);
     } else if (item.type === 'image') {
@@ -752,11 +786,13 @@ function applyTextTool() {
   const size = parseInt(textSize.value) || 16;
   const x = parseInt(textX.value) || 0;
   const y = parseInt(textY.value) || 16;
+  const font = textFont.value;
 
   const newItem = {
     id: generateId(),
     type: 'text',
     text: text,
+    font: font,
     color: color,
     size: size,
     x: x,
@@ -859,5 +895,124 @@ async function generateAnimation() {
   showModal("Success", `Generated ${steps} animation frames starting from frame ${currentFrameIndex + 1}.`, false);
 }
 
+// --- Video Export (.bin) ---
+const btnExportVideo = document.getElementById('btn-export-video');
+const exportFilename = document.getElementById('export-filename');
+const exportMapping = document.getElementById('export-mapping');
+const exportProgressContainer = document.getElementById('export-progress-container');
+const exportProgressBar = document.getElementById('export-progress-bar');
+const exportProgressText = document.getElementById('export-progress-text');
+const exportStatusText = document.getElementById('export-status-text');
+
+// Ported from convertisseur_video.html — maps logical (col,row) to physical LED index
+function mapToLedIndex(col, row) {
+  const NUMBER_OF_PANEL_WIDTH = 12;
+  const NUMBER_OF_PANEL_HEIGHT = 2;
+  const LED_PER_ROW = 16;
+  const LED_PER_COL = 16;
+  const LED_PER_PANEL = 256;
+
+  if (col < 0 || row < 0) return -1;
+  if (col > (NUMBER_OF_PANEL_WIDTH * LED_PER_ROW) - 1 ||
+      row > (NUMBER_OF_PANEL_HEIGHT * LED_PER_COL) - 1) return -1;
+
+  const panel_col = Math.floor(col / LED_PER_ROW);
+  const panel_row = (NUMBER_OF_PANEL_HEIGHT - 1) - Math.floor(row / LED_PER_COL);
+  const panel_index = panel_row * NUMBER_OF_PANEL_WIDTH + (NUMBER_OF_PANEL_WIDTH - 1 - panel_col);
+
+  const local_col = col % LED_PER_ROW;
+  const local_row = (LED_PER_COL - 1) - (row % LED_PER_COL);
+
+  let local_led_index;
+  if (local_row % 2 === 0) {
+    local_led_index = local_row * LED_PER_ROW + (LED_PER_ROW - 1 - local_col);
+  } else {
+    local_led_index = local_row * LED_PER_ROW + local_col;
+  }
+
+  return panel_index * LED_PER_PANEL + local_led_index;
+}
+
+async function exportToBin() {
+  if (frames.length === 0) {
+    showModal("Notice", "Aucune frame à exporter.", false);
+    return;
+  }
+
+  const filename = (exportFilename.value.trim() || 'video') + '.bin';
+  const useCustomMapping = exportMapping.value === 'custom';
+  const totalFrames = frames.length;
+  const totalPixels = WIDTH * HEIGHT;
+
+  btnExportVideo.disabled = true;
+  exportProgressContainer.style.display = 'flex';
+  exportStatusText.innerText = `Traitement de ${totalFrames} frames...`;
+
+  const framesData = [];
+
+  for (let i = 0; i < totalFrames; i++) {
+    drawFrameToContext(offCtx, i, false);
+    const imageData = offCtx.getImageData(0, 0, WIDTH, HEIGHT).data;
+
+    const frameBytes = new Uint8Array(totalPixels * 3);
+
+    for (let y = 0; y < HEIGHT; y++) {
+      for (let x = 0; x < WIDTH; x++) {
+        const pixelIdx = (y * WIDTH + x) * 4;
+
+        let physicalLedIndex;
+        if (useCustomMapping) {
+          physicalLedIndex = mapToLedIndex(x, y);
+        } else {
+          physicalLedIndex = y * WIDTH + x;
+        }
+
+        if (physicalLedIndex >= 0 && physicalLedIndex < totalPixels) {
+          const byteIdx = physicalLedIndex * 3;
+          frameBytes[byteIdx]     = imageData[pixelIdx];     // R
+          frameBytes[byteIdx + 1] = imageData[pixelIdx + 1]; // G
+          frameBytes[byteIdx + 2] = imageData[pixelIdx + 2]; // B
+        }
+      }
+    }
+
+    framesData.push(frameBytes);
+  }
+
+  const finalBlob = new Blob(framesData, { type: 'application/octet-stream' });
+
+  // Use native "Save As" dialog via File System Access API
+  try {
+    const handle = await window.showSaveFilePicker({
+      suggestedName: filename,
+      types: [{
+        description: 'Fichier binaire LED',
+        accept: { 'application/octet-stream': ['.bin'] }
+      }]
+    });
+    const writable = await handle.createWritable();
+    await writable.write(finalBlob);
+    await writable.close();
+
+    exportProgressBar.style.width = '100%';
+    exportProgressText.innerText = '100%';
+    exportStatusText.innerText = `Terminé ! ${filename} enregistré (${totalFrames} frames).`;
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      exportStatusText.innerText = 'Export annulé.';
+    } else {
+      console.error('Erreur lors de l\'enregistrement :', err);
+      exportStatusText.innerText = `Erreur : ${err.message}`;
+    }
+  }
+
+  btnExportVideo.disabled = false;
+
+  // Re-render current view since offCtx was used for export
+  renderCanvas();
+}
+
 // Run
 init();
+btnExportVideo.addEventListener('click', exportToBin);
+

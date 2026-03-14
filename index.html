@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Glougloubus Scene Configurator</title>
     <link rel="stylesheet" href="./style.css" />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono&family=Press+Start+2P&family=VT323&family=Silkscreen&family=Pixelify+Sans&family=Bungee&display=swap" rel="stylesheet">
   </head>
   <body>
     <div class="app-container">
@@ -36,68 +36,128 @@
         <!-- Tools / Properties Panel -->
         <section class="panel tools-panel">
           <h2>Tools</h2>
-          
-          <div class="tool-group">
-            <h3>Image Import</h3>
-            <input type="file" id="image-upload" accept="image/*" />
-            <div class="tool-controls">
-              <label>X Ofs: <input type="number" id="img-x" value="0"></label>
-              <label>Y Ofs: <input type="number" id="img-y" value="0"></label>
-              <label>Scale: <input type="number" id="img-scale" value="1.0" step="0.1" min="0.1"></label>
+          <div class="tool-groups-container">
+            <!-- 1. Text Tool -->
+            <div class="tool-group">
+              <h3>Text Tool</h3>
+              <div class="tool-controls">
+                <input type="text" id="text-input" placeholder="Enter text..." style="flex: 1;" />
+              </div>
+              <div class="tool-controls">
+                <label>Font : 
+                  <select id="text-font" style="width: 150px;">
+                    <option value='"JetBrains Mono", monospace' selected>JetBrains Mono</option>
+                    <option value='"Press Start 2P", cursive'>Press Start 2P</option>
+                    <option value='"VT323", monospace'>VT323 (Terminal)</option>
+                    <option value='"Silkscreen", cursive'>Silkscreen</option>
+                    <option value='"Pixelify Sans", sans-serif'>Pixelify Sans</option>
+                    <option value='"Bungee", cursive'>Bungee</option>
+                    <option value='"Inter", sans-serif'>Inter</option>
+                    <option value='Arial, sans-serif'>Arial</option>
+                    <option value='"Courier New", monospace'>Courier New</option>
+                  </select>
+                </label>
+              </div>
+              <div class="tool-controls">
+                <label>Color: <input type="color" id="text-color" value="#ffffff"></label>
+                <label>Size: <input type="number" id="text-size" value="16" min="1"></label>
+              </div>
+              <div class="tool-controls">
+                <label>X: <input type="number" id="text-x" value="0"></label>
+                <label>Y: <input type="number" id="text-y" value="16"></label>
+              </div>
+              <button id="btn-apply-text" class="btn">Draw Text</button>
             </div>
-            <button id="btn-apply-image" class="btn">Apply to Canvas</button>
-          </div>
 
-          <div class="tool-group">
-            <h3>Text Tool</h3>
-            <input type="text" id="text-input" placeholder="Enter text..." />
-            <div class="tool-controls">
-              <label>Color: <input type="color" id="text-color" value="#ffffff"></label>
-              <label>Size: <input type="number" id="text-size" value="16" min="8"></label>
+            <!-- 2. Animation Tool -->
+            <div class="tool-group">
+              <h3>Animation Tool</h3>
+              <p class="helper-text" style="font-size:0.8rem; margin-bottom:0.5rem; color: #94a3b8;">Select an item. Set its Start and End positions, then generate frames.</p>
+              <div class="tool-controls" style="margin-bottom: 0.25rem; font-size: 0.85rem;">
+                <span style="width: 45px; font-weight: 500;">Start :</span>
+                <label>X: <input type="number" id="anim-start-x" value="0" style="width:60px"></label>
+                <label>Y: <input type="number" id="anim-start-y" value="0" style="width:60px"></label>
+                <div style="display: flex; flex-direction: column; gap: 2px; flex: 1;">
+                  <button id="btn-anim-set-start" class="btn outline" style="padding: 0.2rem; font-size: 0.65rem;">Capture</button>
+                  <button id="btn-anim-apply-start" class="btn outline" style="padding: 0.2rem; font-size: 0.65rem;" title="Apply Start Position to Item">Apply</button>
+                </div>
+              </div>
+              <div class="tool-controls" style="margin-bottom: 0.5rem; font-size: 0.85rem;">
+                <span style="width: 45px; font-weight: 500;">End :</span>
+                <label>X: <input type="number" id="anim-end-x" value="100" style="width:60px"></label>
+                <label>Y: <input type="number" id="anim-end-y" value="0" style="width:60px"></label>
+                <div style="display: flex; flex-direction: column; gap: 2px; flex: 1;">
+                  <button id="btn-anim-set-end" class="btn outline" style="padding: 0.2rem; font-size: 0.65rem;">Capture</button>
+                  <button id="btn-anim-apply-end" class="btn outline" style="padding: 0.2rem; font-size: 0.65rem;" title="Apply End Position to Item">Apply</button>
+                </div>
+              </div>
+              <div class="tool-controls" style="margin-bottom: 0.5rem;">
+                <label>Mode: 
+                  <select id="anim-mode">
+                    <option value="duration">Frames (Duration)</option>
+                    <option value="speed">px/frame (Speed)</option>
+                  </select>
+                </label>
+                <label>Value: <input type="number" id="anim-value" value="20" min="1" style="width:60px"></label>
+              </div>
+              <button id="btn-generate-anim" class="btn secondary">Generate Anim Frames</button>
             </div>
-            <div class="tool-controls">
-              <label>X: <input type="number" id="text-x" value="0"></label>
-              <label>Y: <input type="number" id="text-y" value="16"></label>
-            </div>
-            <button id="btn-apply-text" class="btn">Draw Text</button>
-          </div>
 
-          <!-- Selected Item Tools -->
-          <div class="tool-group" id="selection-tools" style="display: none;">
-            <h3>Active Selection</h3>
-            <button id="btn-delete-item" class="btn outline danger">Delete Selected Item</button>
-          </div>
+            <!-- 3. Pencil Tool -->
+            <div class="tool-group">
+              <h3>Pencil Tool</h3>
+              <div class="tool-controls">
+                <label>Color: <input type="color" id="pencil-color" value="#ff0000"></label>
+              </div>
+              <button id="btn-toggle-pencil" class="btn outline">Enable Pencil Mode</button>
+            </div>
 
-          <div class="tool-group">
-            <h3>Pencil Tool</h3>
-            <div class="tool-controls">
-              <label>Color: <input type="color" id="pencil-color" value="#ff0000"></label>
+            <!-- 4. Image Import -->
+            <div class="tool-group">
+              <h3>Image Import</h3>
+              <input type="file" id="image-upload" accept="image/*" />
+              <div class="tool-controls">
+                <label>X Ofs: <input type="number" id="img-x" value="0"></label>
+                <label>Y Ofs: <input type="number" id="img-y" value="0"></label>
+                <label>Scale: <input type="number" id="img-scale" value="1.0" step="0.1" min="0.1"></label>
+              </div>
+              <button id="btn-apply-image" class="btn">Apply to Canvas</button>
             </div>
-            <button id="btn-toggle-pencil" class="btn outline">Enable Pencil Mode</button>
-          </div>
 
-          <div class="tool-group">
-            <p class="helper-text" style="font-size:0.8rem; margin-bottom:0.5rem; color: #94a3b8;">Select an item. Set its Start and End positions, then generate frames.</p>
-            <div class="tool-controls" style="margin-bottom: 0.25rem;">
-              <button id="btn-anim-set-start" class="btn outline" style="flex:1; padding: 0.25rem;">Set Start to Current</button>
-              <label>X: <input type="number" id="anim-start-x" value="0" style="width:50px"></label>
-              <label>Y: <input type="number" id="anim-start-y" value="0" style="width:50px"></label>
+            <!-- 5. Export Vidéo -->
+            <div class="tool-group export-group">
+              <h3>📹 Export Vidéo (.bin)</h3>
+              <div class="tool-controls">
+                <label>Nom du fichier :
+                  <input type="text" id="export-filename" value="video" placeholder="video" style="width: 120px" />
+                </label>
+                <span style="color: var(--text-muted); font-size: 0.8rem;">.bin</span>
+              </div>
+              <div class="tool-controls">
+                <label>Mapping :
+                  <select id="export-mapping">
+                    <option value="linear">Classique (Ligne par ligne)</option>
+                    <option value="custom" selected>Grille 24 Panneaux (12×2)</option>
+                  </select>
+                </label>
+              </div>
+              <button id="btn-export-video" class="btn export-btn">⬇ Exporter la séquence en .bin</button>
+              <div id="export-progress-container" class="progress-bar-container" style="display: none;">
+                <div class="progress-bar-info">
+                  <span id="export-status-text">Extraction des frames...</span>
+                  <span id="export-progress-text">0%</span>
+                </div>
+                <div class="progress-bar-track">
+                  <div id="export-progress-bar" class="progress-bar-fill" style="width: 0%"></div>
+                </div>
+              </div>
             </div>
-            <div class="tool-controls" style="margin-bottom: 0.5rem;">
-              <button id="btn-anim-set-end" class="btn outline" style="flex:1; padding: 0.25rem;">Set End to Current</button>
-              <label>X: <input type="number" id="anim-end-x" value="100" style="width:50px"></label>
-              <label>Y: <input type="number" id="anim-end-y" value="0" style="width:50px"></label>
+
+            <!-- 6. Selection Active -->
+            <div class="tool-group" id="selection-tools" style="display: none;">
+              <h3>Active Selection</h3>
+              <button id="btn-delete-item" class="btn outline danger">Delete Selected Item</button>
             </div>
-            <div class="tool-controls" style="margin-bottom: 0.5rem;">
-              <label>Mode: 
-                <select id="anim-mode">
-                  <option value="duration">Frames (Duration)</option>
-                  <option value="speed">px/frame (Speed)</option>
-                </select>
-              </label>
-              <label>Value: <input type="number" id="anim-value" value="20" min="1" style="width:60px"></label>
-            </div>
-            <button id="btn-generate-anim" class="btn secondary">Generate Anim Frames</button>
           </div>
         </section>
         </div>
