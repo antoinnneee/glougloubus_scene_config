@@ -56,6 +56,16 @@ let dragStartY = 0;
 let itemStartX = 0;
 let itemStartY = 0;
 
+// Resize State
+let isResizing = false;
+let resizeHandle = null;
+let resizeStartWidth = 0;
+let resizeStartHeight = 0;
+let resizeStartScale = 1;
+let resizeStartSize = 16;
+let resizeItemStartX = 0;
+let resizeItemStartY = 0;
+
 // Offscreen canvas for thumbnail generation and hit testing text measurement
 const offCanvas = document.createElement('canvas');
 offCanvas.width = WIDTH;
@@ -168,6 +178,34 @@ function handleMouseDown(e) {
   if (isPlaying) return;
   const { x, y } = getCanvasCoords(e);
   
+  // Check if clicking on a resize handle first
+  if (selectedItemId) {
+    const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
+    if (item && (item.type === 'text' || item.type === 'image')) {
+      const bounds = getItemBounds(item);
+      const hHit = 4; // hit radius
+      const isHit = (hx, hy) => Math.abs(x - hx) <= hHit && Math.abs(y - hy) <= hHit;
+      
+      if (isHit(bounds.x + bounds.width, bounds.y + bounds.height)) resizeHandle = 'br';
+      else if (isHit(bounds.x, bounds.y)) resizeHandle = 'tl';
+      else if (isHit(bounds.x + bounds.width, bounds.y)) resizeHandle = 'tr';
+      else if (isHit(bounds.x, bounds.y + bounds.height)) resizeHandle = 'bl';
+      
+      if (resizeHandle) {
+        isResizing = true;
+        dragStartX = x;
+        dragStartY = y;
+        resizeStartWidth = bounds.width;
+        resizeStartHeight = bounds.height;
+        resizeStartScale = item.scale || 1.0;
+        resizeStartSize = item.size || 16;
+        resizeItemStartX = item.x;
+        resizeItemStartY = item.y;
+        return; // Skip normal selection/dragging logic
+      }
+    }
+  }
+  
   if (currentTool === 'pencil') {
     isDragging = true;
     currentDrawingId = generateId();
@@ -207,8 +245,40 @@ function handleMouseDown(e) {
 }
 
 function handleMouseMove(e) {
-  if (!isDragging) return;
   const { x, y } = getCanvasCoords(e);
+  
+  if (isResizing && selectedItemId) {
+    const dx = x - dragStartX;
+    const dy = y - dragStartY;
+    const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
+    if (item) {
+       let currentWidth = resizeStartWidth;
+       
+       if (resizeHandle === 'br') { currentWidth += dx; }
+       else if (resizeHandle === 'tl') { currentWidth -= dx; item.x = Math.round(resizeItemStartX + dx); item.y = Math.round(resizeItemStartY + dy); }
+       else if (resizeHandle === 'tr') { currentWidth += dx; item.y = Math.round(resizeItemStartY + dy); }
+       else if (resizeHandle === 'bl') { currentWidth -= dx; item.x = Math.round(resizeItemStartX + dx); }
+       
+       if (currentWidth < 2) currentWidth = 2; // Math.max(1) for scale division safety
+       
+       if (item.type === 'text') {
+          item.size = Math.max(4, Math.round(resizeStartSize * (currentWidth / Math.max(1, resizeStartWidth))));
+          textSize.value = item.size;
+       } else if (item.type === 'image') {
+          item.scale = Math.max(0.01, resizeStartScale * (currentWidth / Math.max(1, resizeStartWidth)));
+          imgScale.value = item.scale.toFixed(2);
+       }
+       
+       // Sync coordinate fields
+       if (item.type === 'text') {textX.value = item.x; textY.value = item.y;} 
+       else {imgX.value = item.x; imgY.value = item.y;}
+       
+       renderCanvas();
+    }
+    return;
+  }
+  
+  if (!isDragging) return;
   
   if (currentTool === 'pencil' && currentDrawingId) {
     const item = frames[currentFrameIndex].find(i => i.id === currentDrawingId);
@@ -252,6 +322,8 @@ function handleMouseMove(e) {
 
 function handleMouseUp(e) {
   isDragging = false;
+  isResizing = false;
+  resizeHandle = null;
   
   // Re-render to finalize active bounds etc if needed
   if (selectedItemId) {
@@ -421,6 +493,22 @@ function drawFrameToContext(context, frameIndex, drawActiveSelectionBox = false)
       context.setLineDash([2, 2]);
       context.strokeRect(bounds.x, bounds.y, bounds.width, bounds.height);
       context.setLineDash([]); // Reset
+      
+      // Draw 4 resize handles
+      if (item.type === 'text' || item.type === 'image') {
+        const hSize = 3;
+        context.fillStyle = '#ffffff';
+        context.strokeStyle = '#000000';
+        context.lineWidth = 1;
+        const drawHandle = (hx, hy) => {
+          context.fillRect(hx - hSize/2, hy - hSize/2, hSize, hSize);
+          context.strokeRect(hx - hSize/2, hy - hSize/2, hSize, hSize);
+        };
+        drawHandle(bounds.x, bounds.y); // top-left
+        drawHandle(bounds.x + bounds.width, bounds.y); // top-right
+        drawHandle(bounds.x, bounds.y + bounds.height); // bottom-left
+        drawHandle(bounds.x + bounds.width, bounds.y + bounds.height); // bottom-right
+      }
     }
   });
 }

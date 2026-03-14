@@ -14,9 +14,10 @@
       </header>
       
       <main class="main-content">
-        <!-- Preview Panel -->
-        <section class="panel preview-panel">
-          <h2>LED Matrix Preview (192 x 32)</h2>
+        <div class="editor-column">
+          <!-- Preview Panel -->
+          <section class="panel preview-panel">
+            <h2>LED Matrix Preview (192 x 32)</h2>
           <div class="canvas-container">
             <!-- The actual canvas is 192x32 logically -->
             <canvas id="led-canvas" width="192" height="32"></canvas>
@@ -52,7 +53,7 @@
             <input type="text" id="text-input" placeholder="Enter text..." />
             <div class="tool-controls">
               <label>Color: <input type="color" id="text-color" value="#ffffff"></label>
-              <label>Size: <input type="number" id="text-size" value="16" min="8" max="32"></label>
+              <label>Size: <input type="number" id="text-size" value="16" min="8"></label>
             </div>
             <div class="tool-controls">
               <label>X: <input type="number" id="text-x" value="0"></label>
@@ -92,6 +93,7 @@
             <button id="btn-generate-anim" class="btn secondary">Generate Anim Frames</button>
           </div>
         </section>
+        </div>
 
         <!-- Sidebar Timeline Panel -->
         <section class="panel timeline-panel">
