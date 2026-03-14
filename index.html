@@ -61,28 +61,53 @@
             <button id="btn-apply-text" class="btn">Draw Text</button>
           </div>
 
+          <!-- Selected Item Tools -->
+          <div class="tool-group" id="selection-tools" style="display: none;">
+            <h3>Active Selection</h3>
+            <button id="btn-delete-item" class="btn outline danger">Delete Selected Item</button>
+          </div>
+
           <div class="tool-group">
-            <h3>Text Animation Generator</h3>
-            <p class="helper-text">Generates frames to scroll text right-to-left.</p>
-            <button id="btn-generate-anim" class="btn secondary">Generate Scroll</button>
+            <h3>Pencil Tool</h3>
+            <div class="tool-controls">
+              <label>Color: <input type="color" id="pencil-color" value="#ff0000"></label>
+            </div>
+            <button id="btn-toggle-pencil" class="btn outline">Enable Pencil Mode</button>
+          </div>
+
+          <div class="tool-group">
+            <h3>Item Animation Generator</h3>
+            <p class="helper-text">Select an item, then configure translation direction and speed to generate scrolling frames.</p>
+            <div class="tool-controls" style="margin-bottom: 0.5rem;">
+              <label>Dir: 
+                <select id="anim-dir">
+                  <option value="left">Left</option>
+                  <option value="right">Right</option>
+                  <option value="up">Up</option>
+                  <option value="down">Down</option>
+                </select>
+              </label>
+              <label>Speed (px): <input type="number" id="anim-speed" value="2" min="1"></label>
+            </div>
+            <button id="btn-generate-anim" class="btn secondary">Generate Anim Frames</button>
+          </div>
+        </section>
+
+        <!-- Sidebar Timeline Panel -->
+        <section class="panel timeline-panel">
+          <div class="timeline-header" style="flex-direction: column; align-items: stretch; gap: 0.5rem;">
+            <h2>Frames</h2>
+            <div class="timeline-actions" style="display: flex; flex-direction: column; gap: 0.5rem;">
+              <button id="btn-add-frame" class="btn">Add Frame</button>
+              <button id="btn-dup-frame" class="btn">Duplicate Frame</button>
+              <button id="btn-del-frame" class="btn danger outline">Delete Frame</button>
+            </div>
+          </div>
+          <div class="timeline-frames" id="timeline-container">
+            <!-- Frame thumbnails will be generated here -->
           </div>
         </section>
       </main>
-
-      <!-- Bottom Timeline Panel -->
-      <section class="timeline-panel">
-        <div class="timeline-header">
-          <h2>Frames</h2>
-          <div class="timeline-actions">
-            <button id="btn-add-frame" class="btn">Add Frame</button>
-            <button id="btn-dup-frame" class="btn">Duplicate Frame</button>
-            <button id="btn-del-frame" class="btn danger">Delete Frame</button>
-          </div>
-        </div>
-        <div class="timeline-frames" id="timeline-container">
-          <!-- Frame thumbnails will be generated here -->
-        </div>
-      </section>
     </div>
 
     <!-- Custom Modal Dialog -->

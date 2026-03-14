@@ -208,6 +208,7 @@ input[type="color"] {
 
 /* Timeline */
 .timeline-panel {
+  flex: 0 0 200px;
   background: var(--bg-panel);
   border-radius: var(--border-radius);
   padding: 1rem;
@@ -215,7 +216,6 @@ input[type="color"] {
   border: 1px solid rgba(255,255,255,0.1);
   display: flex;
   flex-direction: column;
-  height: 200px;
 }
 
 .timeline-header {
@@ -227,14 +227,16 @@ input[type="color"] {
 
 .timeline-frames {
   display: flex;
+  flex-direction: column; /* Vertical scrolling */
   gap: 1rem;
-  overflow-x: auto;
-  padding-bottom: 0.5rem;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 0.5rem;
   flex: 1;
 }
 
 .timeline-frames::-webkit-scrollbar {
-  height: 8px;
+  width: 8px; /* Changed from height to width for vertical */
 }
 .timeline-frames::-webkit-scrollbar-thumb {
   background: var(--bg-secondary);

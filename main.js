@@ -28,6 +28,14 @@ const textX = document.getElementById('text-x');
 const textY = document.getElementById('text-y');
 const btnApplyText = document.getElementById('btn-apply-text');
 
+const selectionTools = document.getElementById('selection-tools');
+const btnDeleteItem = document.getElementById('btn-delete-item');
+
+const btnTogglePencil = document.getElementById('btn-toggle-pencil');
+const pencilColor = document.getElementById('pencil-color');
+
+const animDir = document.getElementById('anim-dir');
+const animSpeed = document.getElementById('anim-speed');
 const btnGenerateAnim = document.getElementById('btn-generate-anim');
 
 // --- State ---
@@ -38,9 +46,11 @@ let isPlaying = false;
 let fps = 20;
 let playInterval = null;
 
-// Object Selection State
+// Object Selection and Tool State
 let selectedItemId = null;
+let currentTool = 'select'; // 'select' | 'pencil'
 let isDragging = false;
+let currentDrawingId = null;
 let dragStartX = 0;
 let dragStartY = 0;
 let itemStartX = 0;
@@ -107,12 +117,28 @@ function init() {
   btnApplyText.innerText = "Add Text";
   btnApplyImage.addEventListener('click', applyImageTool);
   btnApplyText.addEventListener('click', applyTextTool);
-  btnGenerateAnim.addEventListener('click', generateTextAnimation);
+  btnGenerateAnim.addEventListener('click', generateAnimation);
+  
+  btnDeleteItem.addEventListener('click', deleteSelectedItem);
+  btnTogglePencil.addEventListener('click', togglePencilMode);
 
   // Mouse/Touch Events for Dragging
   canvas.addEventListener('mousedown', handleMouseDown);
   window.addEventListener('mousemove', handleMouseMove); // Window to handle dragging out of bounds
   window.addEventListener('mouseup', handleMouseUp);
+  
+  // Keyboard Delete
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      const activeTag = document.activeElement.tagName.toLowerCase();
+      if (activeTag !== 'input' && activeTag !== 'textarea') {
+        if (selectedItemId) {
+          e.preventDefault();
+          deleteSelectedItem();
+        }
+      }
+    }
+  });
   
   // Property changes live update the selected item
   textInput.addEventListener('input', updateSelectedItemProperties);
@@ -142,6 +168,20 @@ function handleMouseDown(e) {
   if (isPlaying) return;
   const { x, y } = getCanvasCoords(e);
   
+  if (currentTool === 'pencil') {
+    isDragging = true;
+    currentDrawingId = generateId();
+    frames[currentFrameIndex].push({
+      id: currentDrawingId,
+      type: 'drawing',
+      color: pencilColor.value,
+      points: [{ x: Math.round(x), y: Math.round(y) }]
+    });
+    renderCanvas();
+    updateTimelineThumb(currentFrameIndex);
+    return;
+  }
+  
   const hitItem = findItemAtCoord(x, y);
   
   if (hitItem) {
@@ -152,35 +192,58 @@ function handleMouseDown(e) {
     itemStartX = hitItem.x;
     itemStartY = hitItem.y;
     
+    if (hitItem.type === 'drawing') {
+      hitItem.originalPoints = JSON.parse(JSON.stringify(hitItem.points));
+    }
+    
     // Populate properties panel with selected item data
     populatePropertiesPanel(hitItem);
   } else {
     selectedItemId = null;
   }
   
+  updateSelectionUI();
   renderCanvas();
 }
 
 function handleMouseMove(e) {
-  if (!isDragging || !selectedItemId) return;
-  
+  if (!isDragging) return;
   const { x, y } = getCanvasCoords(e);
+  
+  if (currentTool === 'pencil' && currentDrawingId) {
+    const item = frames[currentFrameIndex].find(i => i.id === currentDrawingId);
+    if (item) {
+      item.points.push({ x: Math.round(x), y: Math.round(y) });
+      renderCanvas();
+    }
+    return;
+  }
+  
+  if (!selectedItemId) return;
+  
   const dx = x - dragStartX;
   const dy = y - dragStartY;
   
   const frameItems = frames[currentFrameIndex];
   const item = frameItems.find(i => i.id === selectedItemId);
   if (item) {
-    item.x = Math.round(itemStartX + dx);
-    item.y = Math.round(itemStartY + dy);
-    
-    // Sync UI inputs with dragging
-    if (item.type === 'text') {
-      textX.value = item.x;
-      textY.value = item.y;
-    } else if (item.type === 'image') {
-      imgX.value = item.x;
-      imgY.value = item.y;
+    if (item.type === 'text' || item.type === 'image') {
+      item.x = Math.round(itemStartX + dx);
+      item.y = Math.round(itemStartY + dy);
+      
+      // Sync UI inputs with dragging
+      if (item.type === 'text') {
+        textX.value = item.x;
+        textY.value = item.y;
+      } else if (item.type === 'image') {
+        imgX.value = item.x;
+        imgY.value = item.y;
+      }
+    } else if (item.type === 'drawing' && item.originalPoints) {
+      item.points = item.originalPoints.map(pt => ({
+        x: Math.round(pt.x + dx),
+        y: Math.round(pt.y + dy)
+      }));
     }
   }
   
@@ -231,6 +294,17 @@ function getItemBounds(item) {
       width: item.img.width * item.scale,
       height: item.img.height * item.scale
     };
+  } else if (item.type === 'drawing') {
+    if (!item.points || item.points.length === 0) return {x:0,y:0,width:0,height:0};
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    item.points.forEach(pt => {
+      minX = Math.min(minX, pt.x);
+      minY = Math.min(minY, pt.y);
+      maxX = Math.max(maxX, pt.x);
+      maxY = Math.max(maxY, pt.y);
+    });
+    // Add +2 padding for hit area
+    return { x: minX - 1, y: minY - 1, width: maxX - minX + 3, height: maxY - minY + 3 };
   }
   return { x:0, y:0, width:0, height:0 };
 }
@@ -271,11 +345,47 @@ function updateSelectedItemProperties(e) {
   updateTimelineThumb(currentFrameIndex);
 }
 
+function updateSelectionUI() {
+  if (selectedItemId) {
+    selectionTools.style.display = 'flex';
+  } else {
+    selectionTools.style.display = 'none';
+  }
+}
+
+function deleteSelectedItem() {
+  if (!selectedItemId || isPlaying) return;
+  const frameItems = frames[currentFrameIndex];
+  frames[currentFrameIndex] = frameItems.filter(i => i.id !== selectedItemId);
+  selectedItemId = null;
+  updateSelectionUI();
+  renderCanvas();
+  updateTimelineThumb(currentFrameIndex);
+}
+
+function togglePencilMode() {
+  if (currentTool === 'select') {
+    currentTool = 'pencil';
+    selectedItemId = null;
+    updateSelectionUI();
+    renderCanvas();
+    btnTogglePencil.innerText = 'Enable Select Mode';
+    btnTogglePencil.classList.replace('outline', 'primary');
+    canvas.style.cursor = 'crosshair';
+  } else {
+    currentTool = 'select';
+    btnTogglePencil.innerText = 'Enable Pencil Mode';
+    btnTogglePencil.classList.replace('primary', 'outline');
+    canvas.style.cursor = 'default';
+  }
+}
+
 // --- Core Rendering ---
 function updateUI() {
   if (currentFrameIndex >= frames.length) currentFrameIndex = frames.length - 1;
   if (currentFrameIndex < 0 && frames.length > 0) currentFrameIndex = 0;
   selectedItemId = null; // deselect on frame change
+  updateSelectionUI();
   renderCanvas();
   renderTimeline();
 }
@@ -296,6 +406,11 @@ function drawFrameToContext(context, frameIndex, drawActiveSelectionBox = false)
       context.fillText(item.text, item.x, item.y);
     } else if (item.type === 'image') {
       context.drawImage(item.img, item.x, item.y, item.img.width * item.scale, item.img.height * item.scale);
+    } else if (item.type === 'drawing') {
+      context.fillStyle = item.color;
+      item.points.forEach(pt => {
+        context.fillRect(pt.x, pt.y, 1, 1);
+      });
     }
     
     // Draw Selection Box
@@ -434,13 +549,19 @@ function applyImageTool() {
   reader.onload = (e) => {
     const img = new Image();
     img.onload = () => {
+      let finalScale = scale;
+      if (img.width > WIDTH || img.height > HEIGHT) {
+        finalScale = Math.min(WIDTH / img.width, HEIGHT / img.height);
+        imgScale.value = finalScale.toFixed(2);
+      }
+
       const newItem = {
         id: generateId(),
         type: 'image',
         img: img,
         x: x,
         y: y,
-        scale: scale
+        scale: finalScale
       };
       frames[currentFrameIndex].push(newItem);
       selectedItemId = newItem.id;
@@ -477,48 +598,75 @@ function applyTextTool() {
   updateTimelineThumb(currentFrameIndex);
 }
 
-// Generate a scrolling text animation from right to left using objects
-async function generateTextAnimation() {
-  const text = textInput.value;
-  if (!text) {
-    showModal("Notice", "Please enter some text in the text tool first.", false);
+// Generate a scrolling animation for the currently selected item
+async function generateAnimation() {
+  if (!selectedItemId) {
+    showModal("Notice", "Please select an item on the canvas first to animate it.", false);
     return;
   }
+  
+  const selectedItem = frames[currentFrameIndex].find(i => i.id === selectedItemId);
+  if (!selectedItem) return;
 
-  const color = textColor.value;
-  const size = parseInt(textSize.value) || 16;
-  const y = parseInt(textY.value) || 16;
+  const dir = animDir.value;
+  const speed = parseInt(animSpeed.value) || 2;
+  const bounds = getItemBounds(selectedItem);
   
-  // Measure text
-  offCtx.font = `${size}px "JetBrains Mono", monospace`;
-  const metrics = offCtx.measureText(text);
-  const textWidth = Math.ceil(metrics.width);
+  let steps = 0;
+  if (dir === 'left') {
+    steps = Math.ceil((bounds.x + bounds.width) / speed);
+  } else if (dir === 'right') {
+    steps = Math.ceil((WIDTH - bounds.x) / speed);
+  } else if (dir === 'up') {
+    steps = Math.ceil((bounds.y + bounds.height) / speed);
+  } else if (dir === 'down') {
+    steps = Math.ceil((HEIGHT - bounds.y) / speed);
+  }
   
-  // Start from right edge
-  let currentX = WIDTH;
-  const targetX = -textWidth;
-  const steps = WIDTH + textWidth;
+  if (steps <= 0) steps = 20; // Failsafe if completely offscreen
   
-  const confirmed = await showModal("Confirm Generation", `This will append ${Math.ceil(steps/2)} frames to the timeline. Proceed?`, true);
+  const confirmed = await showModal(
+    "Confirm Generation", 
+    `This will append ${steps} frames to animate the item ${dir}wards at ${speed}px/frame. Proceed?`, 
+    true
+  );
   if (!confirmed) return;
 
-  for(let i=0; i<steps; i+=2) {
-    const newItem = {
-      id: generateId(),
-      type: 'text',
-      text: text,
-      color: color,
-      size: size,
-      x: currentX,
-      y: y
-    };
+  let currentX = selectedItem.x;
+  let currentY = selectedItem.y;
+  
+  for(let i = 0; i < steps; i++) {
+    if (dir === 'left') currentX -= speed;
+    else if (dir === 'right') currentX += speed;
+    else if (dir === 'up') currentY -= speed;
+    else if (dir === 'down') currentY += speed;
     
-    frames.push([newItem]); // Create new frame with just this object
-    currentX -= 2;
+    // Duplicate item properties
+    let newItem = JSON.parse(JSON.stringify(selectedItem));
+    newItem.id = generateId();
+    newItem.x = currentX;
+    newItem.y = currentY;
+    
+    // Re-attach HTML element references that JSON.stringify strips out
+    if (selectedItem.type === 'image') {
+       newItem.img = selectedItem.img;
+    }
+    
+    // Recalculate inner points for drawings
+    if (selectedItem.type === 'drawing') {
+      const dx = currentX - selectedItem.x;
+      const dy = currentY - selectedItem.y;
+      newItem.points = selectedItem.points.map(pt => ({ x: pt.x + dx, y: pt.y + dy }));
+      if (selectedItem.originalPoints) {
+         newItem.originalPoints = selectedItem.originalPoints.map(opt => ({ x: opt.x + dx, y: opt.y + dy }));
+      }
+    }
+    
+    frames.push([newItem]); 
   }
   
   updateUI();
-  showModal("Success", `Added ${Math.ceil(steps/2)} frames.`, false);
+  showModal("Success", `Added ${steps} frames.`, false);
 }
 
 // Run
