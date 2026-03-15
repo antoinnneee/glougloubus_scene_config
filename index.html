@@ -11,6 +11,10 @@
     <div class="app-container">
       <header class="app-header">
         <h1>🚍 Glougloubus Scene Configurator</h1>
+        <div class="header-actions" style="margin-left:auto; display:flex; align-items:center; gap:10px;">
+          <span id="ble-status-text" style="font-size:0.8rem; color:#94a3b8;">Not connected</span>
+          <button id="btn-connect-ble" class="btn outline">Connect BLE</button>
+        </div>
       </header>
       
       <main class="main-content">
@@ -144,6 +148,7 @@
                 </label>
               </div>
               <button id="btn-export-video" class="btn export-btn">⬇ Exporter la séquence en .bin</button>
+              <button id="btn-stream-ble" class="btn export-btn" style="margin-top: 0.5rem; display: none; background-color: #2563eb; color: white;">📶 Streamer via BLE</button>
               <div id="export-progress-container" class="progress-bar-container" style="display: none;">
                 <div class="progress-bar-info">
                   <span id="export-status-text">Extraction des frames...</span>

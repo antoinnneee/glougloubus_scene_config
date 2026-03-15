@@ -9,6 +9,21 @@ const btnPlayPause = document.getElementById('btn-play-pause');
 const inputFps = document.getElementById('fps-input');
 const btnClear = document.getElementById('btn-clear-canvas');
 
+// --- BLE Config ---
+const SERVICE_VIDEO_UUID = "cb47ec30-0000-1000-8000-00805f9b34fb";
+const VIDEO_CONTROL_UUID = "cb47ec31-0000-1000-8000-00805f9b34fb";
+const VIDEO_DATA_UUID = "cb47ec32-0000-1000-8000-00805f9b34fb";
+const SERVICE_GENERAL_UUID = "cb47ec90-0000-1000-8000-00805f9b34fb";
+
+let gattServer = null;
+let videoControlCharacteristic = null;
+let videoDataCharacteristic = null;
+let isBleConnected = false;
+
+const btnConnectBle = document.getElementById('btn-connect-ble');
+const bleStatusText = document.getElementById('ble-status-text');
+const btnStreamBle = document.getElementById('btn-stream-ble');
+
 const btnAddFrame = document.getElementById('btn-add-frame');
 const btnDupFrame = document.getElementById('btn-dup-frame');
 const btnDelFrame = document.getElementById('btn-del-frame');
@@ -140,6 +155,9 @@ function init() {
   btnApplyImage.addEventListener('click', applyImageTool);
   btnApplyText.addEventListener('click', applyTextTool);
   btnGenerateAnim.addEventListener('click', generateAnimation);
+  
+  btnConnectBle.addEventListener('click', connectBle);
+  btnStreamBle.addEventListener('click', streamToBle);
   
   btnAnimSetStart.addEventListener('click', () => {
     if (selectedItemId) {
@@ -1047,4 +1065,149 @@ async function exportToBin() {
 // Run
 init();
 btnExportVideo.addEventListener('click', exportToBin);
+
+// --- BLE Logic ---
+async function connectBle() {
+  if (isBleConnected) {
+    if (gattServer) gattServer.disconnect();
+    return;
+  }
+  
+  try {
+    bleStatusText.innerText = 'Connexion...';
+    
+    const device = await navigator.bluetooth.requestDevice({
+        filters: [{ name: 'glougloubus' }],
+        optionalServices: [SERVICE_GENERAL_UUID, SERVICE_VIDEO_UUID]
+    });
+    
+    gattServer = await device.gatt.connect();
+    
+    const service = await gattServer.getPrimaryService(SERVICE_VIDEO_UUID);
+    videoControlCharacteristic = await service.getCharacteristic(VIDEO_CONTROL_UUID);
+    videoDataCharacteristic = await service.getCharacteristic(VIDEO_DATA_UUID);
+    
+    isBleConnected = true;
+    bleStatusText.innerText = 'Connecté';
+    bleStatusText.style.color = '#4ade80';
+    btnConnectBle.innerText = 'Disconnect BLE';
+    btnStreamBle.style.display = 'block';
+    
+    device.addEventListener('gattserverdisconnected', onBleDisconnected);
+  } catch(err) {
+    console.error(err);
+    bleStatusText.innerText = 'Erreur';
+    bleStatusText.style.color = '#f87171';
+  }
+}
+
+function onBleDisconnected() {
+    isBleConnected = false;
+    bleStatusText.innerText = 'Not connected';
+    bleStatusText.style.color = '#94a3b8';
+    btnConnectBle.innerText = 'Connect BLE';
+    btnStreamBle.style.display = 'none';
+    gattServer = null;
+    videoControlCharacteristic = null;
+    videoDataCharacteristic = null;
+}
+
+async function streamToBle() {
+  if (!isBleConnected || !videoControlCharacteristic || !videoDataCharacteristic) {
+    showModal("Notice", "Non connecté ou caractéristiques manquantes", false);
+    return;
+  }
+  
+  if (frames.length === 0) {
+    showModal("Notice", "Aucune frame à exporter.", false);
+    return;
+  }
+
+  const useCustomMapping = exportMapping.value === 'custom';
+  const totalFrames = frames.length;
+  const totalPixels = WIDTH * HEIGHT;
+
+  btnStreamBle.disabled = true;
+  exportProgressContainer.style.display = 'flex';
+  exportStatusText.innerText = `Génération des frames...`;
+  exportProgressBar.style.width = '0%';
+  exportProgressText.innerText = '0%';
+
+  const framesData = [];
+  let totalDataLength = 0;
+
+  for (let i = 0; i < totalFrames; i++) {
+    drawFrameToContext(offCtx, i, false);
+    const imageData = offCtx.getImageData(0, 0, WIDTH, HEIGHT).data;
+
+    const frameBytes = new Uint8Array(totalPixels * 3);
+
+    for (let y = 0; y < HEIGHT; y++) {
+      for (let x = 0; x < WIDTH; x++) {
+        const pixelIdx = (y * WIDTH + x) * 4;
+
+        let physicalLedIndex;
+        if (useCustomMapping) {
+          physicalLedIndex = mapToLedIndex(x, y);
+        } else {
+          physicalLedIndex = y * WIDTH + x;
+        }
+
+        if (physicalLedIndex >= 0 && physicalLedIndex < totalPixels) {
+          const byteIdx = physicalLedIndex * 3;
+          frameBytes[byteIdx]     = imageData[pixelIdx];     // R
+          frameBytes[byteIdx + 1] = imageData[pixelIdx + 1]; // G
+          frameBytes[byteIdx + 2] = imageData[pixelIdx + 2]; // B
+        }
+      }
+    }
+
+    framesData.push(frameBytes);
+    totalDataLength += frameBytes.length;
+  }
+
+  // Flatten the frames into a single Uint8Array
+  const fullData = new Uint8Array(totalDataLength);
+  let offset = 0;
+  for(let i=0; i<framesData.length; i++){
+     fullData.set(framesData[i], offset);
+     offset += framesData[i].length;
+  }
+
+  // Start BLE Transmission
+  exportStatusText.innerText = `Envoi BLE (${totalDataLength} octets)...`;
+  try {
+     await videoControlCharacteristic.writeValue(new Uint8Array([1])); // Start
+     
+     const CHUNK_SIZE = 500; // Safe chunk size for BLE
+     let sentOffset = 0;
+     
+     while(sentOffset < totalDataLength) {
+         let chunkEnd = sentOffset + CHUNK_SIZE;
+         if(chunkEnd > totalDataLength) chunkEnd = totalDataLength;
+         
+         const chunk = fullData.subarray(sentOffset, chunkEnd);
+         await videoDataCharacteristic.writeValue(chunk);
+         
+         sentOffset = chunkEnd;
+         
+         const progress = Math.round((sentOffset / totalDataLength) * 100);
+         exportProgressBar.style.width = `${progress}%`;
+         exportProgressText.innerText = `${progress}%`;
+     }
+     
+     await videoControlCharacteristic.writeValue(new Uint8Array([0])); // Stop
+     
+     exportProgressBar.style.width = '100%';
+     exportProgressText.innerText = '100%';
+     exportStatusText.innerText = `Terminé ! ${totalFrames} frames envoyées via BLE.`;
+  } catch (err) {
+     console.error('Erreur BLE:', err);
+     exportStatusText.innerText = `Erreur : ${err.message}`;
+     try { await videoControlCharacteristic.writeValue(new Uint8Array([0])); } catch(e){} // Safety attempt
+  }
+
+  btnStreamBle.disabled = false;
+  renderCanvas();
+}
 
