@@ -874,7 +874,7 @@ function updateSelectedItemProperties(e) {
 
 function updateSelectionUI() {
   const has = !!selectedItemId;
-  selectionTools.style.display = has ? 'flex' : 'none';
+  selectionTools.hidden = !has;
   if (btnDeleteSelected) btnDeleteSelected.disabled = !has;
 }
 
@@ -1506,7 +1506,7 @@ async function exportToBin() {
   const totalPixels = WIDTH * HEIGHT;
 
   btnExportVideo.disabled = true;
-  exportProgressContainer.style.display = 'flex';
+  exportProgressContainer.hidden = false;
   exportStatusText.innerText = `Traitement de ${totalFrames} frames...`;
 
   const framesData = [];
@@ -1601,7 +1601,7 @@ async function connectBle() {
     isBleConnected = true;
     setBleStatus('connected', 'Connecté');
     btnConnectBle.innerText = 'Disconnect BLE';
-    btnStreamBle.style.display = 'block';
+    btnStreamBle.hidden = false;
     if (btnBleTestPattern) btnBleTestPattern.disabled = false;
 
     device.addEventListener('gattserverdisconnected', onBleDisconnected);
@@ -1622,7 +1622,7 @@ function onBleDisconnected() {
     isBleConnected = false;
     setBleStatus('disconnected', 'Not connected');
     btnConnectBle.innerText = 'Connect BLE';
-    btnStreamBle.style.display = 'none';
+    btnStreamBle.hidden = true;
     if (btnBleTestPattern) btnBleTestPattern.disabled = true;
     gattServer = null;
     videoControlCharacteristic = null;
@@ -1645,7 +1645,7 @@ async function streamToBle() {
   const totalPixels = WIDTH * HEIGHT;
 
   btnStreamBle.disabled = true;
-  exportProgressContainer.style.display = 'flex';
+  exportProgressContainer.hidden = false;
   exportStatusText.innerText = `Génération des frames...`;
   exportProgressBar.style.width = '0%';
   exportProgressText.innerText = '0%';
@@ -2187,7 +2187,7 @@ async function exportGif() {
   if (frames.length === 0) { showModal('Notice', 'Aucune frame.', false); return; }
   if (btnExportGif) btnExportGif.disabled = true;
   if (exportStatusText) exportStatusText.innerText = 'Génération GIF…';
-  if (exportProgressContainer) exportProgressContainer.style.display = 'flex';
+  if (exportProgressContainer) exportProgressContainer.hidden = false;
 
   // Collecte toutes les frames en RGBA + construit palette globale
   const framesRgb = [];
