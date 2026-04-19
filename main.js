@@ -212,10 +212,11 @@ function init() {
   btnDeleteItem.addEventListener('click', deleteSelectedItem);
   btnTogglePencil.addEventListener('click', togglePencilMode);
 
-  // Mouse/Touch Events for Dragging
-  canvas.addEventListener('mousedown', handleMouseDown);
-  window.addEventListener('mousemove', handleMouseMove); // Window to handle dragging out of bounds
-  window.addEventListener('mouseup', handleMouseUp);
+  // Pointer events — unifié mouse + touch + stylet
+  canvas.addEventListener('pointerdown', handlePointerDown);
+  canvas.addEventListener('pointermove', handlePointerMove);
+  canvas.addEventListener('pointerup', handlePointerUp);
+  canvas.addEventListener('pointercancel', handlePointerUp);
   
   // Keyboard Delete
   window.addEventListener('keydown', (e) => {
@@ -255,16 +256,25 @@ function getCanvasCoords(event) {
   };
 }
 
-function handleMouseDown(e) {
+// Hit radius des handles de resize : cible ~24 CSS px. Converti en unités logiques
+// (192×32) d'après la taille affichée réelle du canvas.
+function getResizeHitRadius() {
+  const rect = canvas.getBoundingClientRect();
+  return Math.max(6, 24 * (WIDTH / rect.width));
+}
+
+function handlePointerDown(e) {
   if (isPlaying) return;
+  // Capture le pointer pour recevoir move/up même hors canvas
+  canvas.setPointerCapture(e.pointerId);
   const { x, y } = getCanvasCoords(e);
-  
+
   // Check if clicking on a resize handle first
   if (selectedItemId) {
     const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
     if (item && (item.type === 'text' || item.type === 'image')) {
       const bounds = getItemBounds(item);
-      const hHit = 6; // slightly larger hit radius (in logical pixels)
+      const hHit = getResizeHitRadius();
       const isHit = (hx, hy) => Math.abs(x - hx) <= hHit && Math.abs(y - hy) <= hHit;
       
       if (isHit(bounds.x + bounds.width, bounds.y + bounds.height)) resizeHandle = 'br';
@@ -325,7 +335,7 @@ function handleMouseDown(e) {
   renderCanvas();
 }
 
-function handleMouseMove(e) {
+function handlePointerMove(e) {
   const { x, y } = getCanvasCoords(e);
   
   if (isResizing && selectedItemId) {
@@ -401,7 +411,10 @@ function handleMouseMove(e) {
   renderCanvas();
 }
 
-function handleMouseUp(e) {
+function handlePointerUp(e) {
+  if (e && e.pointerId !== undefined && canvas.hasPointerCapture(e.pointerId)) {
+    canvas.releasePointerCapture(e.pointerId);
+  }
   isDragging = false;
   isResizing = false;
   resizeHandle = null;
@@ -640,12 +653,14 @@ function renderCanvas() {
       ctx.strokeRect(sx, sy, sw, sh);
       ctx.setLineDash([]); // Reset
       
-      // Draw 4 resize handles
+      // Draw 4 resize handles — taille ~18 CSS px quelle que soit la taille d'affichage
       if (item.type === 'text' || item.type === 'image') {
-        const hSize = 8;
+        const cssWidth = canvas.getBoundingClientRect().width || canvas.width;
+        const bufferPerCss = canvas.width / cssWidth;
+        const hSize = 18 * bufferPerCss;
         ctx.fillStyle = '#ffffff';
         ctx.strokeStyle = '#000000';
-        ctx.lineWidth = 2;
+        ctx.lineWidth = Math.max(2, 2 * bufferPerCss);
         const drawHandle = (hx, hy) => {
           ctx.fillRect(hx - hSize/2, hy - hSize/2, hSize, hSize);
           ctx.strokeRect(hx - hSize/2, hy - hSize/2, hSize, hSize);
