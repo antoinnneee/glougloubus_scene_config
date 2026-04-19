@@ -22,3 +22,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Claude Code local workspace
+.claude/
+
+# Windows / MSYS crash dumps
+*.stackdump
