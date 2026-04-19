@@ -156,6 +156,13 @@ let itemStartY = 0;
 // Preview shape en cours (line/rect/ellipse)
 let shapePreview = null;
 
+// Pinch multi-touch sur canvas : resize item ou zoom vue
+const canvasPointers = new Map();   // pointerId -> { x, y }
+let pinchStartDist = null;
+let pinchStartItem = null;          // snapshot {size, scale, x, y}
+let pinchStartZoom = null;
+let pinchMode = null;               // 'resize' | 'zoom'
+
 // Resize State
 let isResizing = false;
 let resizeHandle = null;
@@ -393,6 +400,46 @@ function applySnap(v) {
 function handlePointerDown(e) {
   if (isPlaying) return;
   canvas.setPointerCapture(e.pointerId);
+  canvasPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+  // Deuxième pointer : bascule en mode pinch (resize item ou zoom vue)
+  if (canvasPointers.size === 2) {
+    // Annule toute interaction single-finger en cours
+    isDragging = false;
+    isResizing = false;
+    resizeHandle = null;
+    currentDrawingId = null;
+    // Supprime la dernière stroke du pinceau si elle vient d'être amorcée
+    if (currentTool === 'pencil' && frames[currentFrameIndex].length > 0) {
+      const last = frames[currentFrameIndex][frames[currentFrameIndex].length - 1];
+      if (last.type === 'drawing' && last.points.length <= 2) {
+        frames[currentFrameIndex].pop();
+      }
+    }
+    shapePreview = null;
+
+    const pts = [...canvasPointers.values()];
+    pinchStartDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+
+    const selItem = selectedItemId && frames[currentFrameIndex].find(i => i.id === selectedItemId);
+    if (selItem && (selItem.type === 'text' || selItem.type === 'image')) {
+      pinchMode = 'resize';
+      pushUndo();
+      pinchStartItem = {
+        size: selItem.size || 16,
+        scale: selItem.scale || 1,
+        x: selItem.x,
+        y: selItem.y
+      };
+    } else {
+      pinchMode = 'zoom';
+      pinchStartZoom = viewZoom;
+    }
+    renderCanvas();
+    return;
+  }
+  if (canvasPointers.size > 2) return;
+
   const raw = getCanvasCoords(e);
   const x = raw.x, y = raw.y;
 
@@ -564,14 +611,38 @@ function bucketFillAt(startX, startY, newColorHex) {
 }
 
 function handlePointerMove(e) {
-  const { x, y } = getCanvasCoords(e);
-
-  // Coordonnées curseur en direct pour l'overlay
-  if (cursorCoords) {
-    const gx = Math.max(0, Math.min(WIDTH - 1, Math.floor(x)));
-    const gy = Math.max(0, Math.min(HEIGHT - 1, Math.floor(y)));
-    cursorCoords.textContent = `x:${gx} y:${gy}`;
+  // Suivi multi-touch
+  if (canvasPointers.has(e.pointerId)) {
+    canvasPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   }
+
+  // Pinch : resize item sélectionné ou zoom vue
+  if (pinchMode && canvasPointers.size >= 2) {
+    const pts = [...canvasPointers.values()];
+    const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+    const ratio = dist / (pinchStartDist || dist);
+
+    if (pinchMode === 'resize') {
+      const item = selectedItemId && frames[currentFrameIndex].find(i => i.id === selectedItemId);
+      if (item && pinchStartItem) {
+        if (item.type === 'text') {
+          item.size = Math.max(1, Math.round(pinchStartItem.size * ratio));
+          if (textSize) textSize.value = item.size;
+        } else if (item.type === 'image') {
+          item.scale = Math.max(0.01, pinchStartItem.scale * ratio);
+          if (imgScale) imgScale.value = item.scale.toFixed(2);
+        }
+        renderCanvas();
+      }
+    } else if (pinchMode === 'zoom') {
+      const cx = (pts[0].x + pts[1].x) / 2;
+      const cy = (pts[0].y + pts[1].y) / 2;
+      setZoom((pinchStartZoom || viewZoom) * ratio, cx, cy);
+    }
+    return;
+  }
+
+  const { x, y } = getCanvasCoords(e);
 
   // Preview pendant drag d'un shape
   if (isDragging && shapePreview && ['line','rect','rect-outline','ellipse'].includes(currentTool)) {
@@ -667,6 +738,19 @@ function handlePointerMove(e) {
 function handlePointerUp(e) {
   if (e && e.pointerId !== undefined && canvas.hasPointerCapture(e.pointerId)) {
     canvas.releasePointerCapture(e.pointerId);
+  }
+  canvasPointers.delete(e.pointerId);
+
+  // Fin de pinch
+  if (pinchMode && canvasPointers.size < 2) {
+    pinchMode = null;
+    pinchStartDist = null;
+    pinchStartItem = null;
+    pinchStartZoom = null;
+    renderCanvas();
+    if (selectedItemId) updateTimelineThumb(currentFrameIndex);
+    updateSelectionUI();
+    return;
   }
 
   // Commit shape preview en item réel
@@ -789,21 +873,9 @@ function updateSelectedItemProperties(e) {
 }
 
 function updateSelectionUI() {
-  if (selectedItemId) {
-    selectionTools.style.display = 'flex';
-    if (btnDeleteSelected) btnDeleteSelected.hidden = false;
-    if (selectionInfo) {
-      const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
-      if (item) {
-        const b = getItemBounds(item);
-        selectionInfo.textContent = `sel: ${Math.round(b.width)}×${Math.round(b.height)} @ ${Math.round(b.x)},${Math.round(b.y)}`;
-      }
-    }
-  } else {
-    selectionTools.style.display = 'none';
-    if (btnDeleteSelected) btnDeleteSelected.hidden = true;
-    if (selectionInfo) selectionInfo.textContent = '';
-  }
+  const has = !!selectedItemId;
+  selectionTools.style.display = has ? 'flex' : 'none';
+  if (btnDeleteSelected) btnDeleteSelected.disabled = !has;
 }
 
 function deleteSelectedItem() {
