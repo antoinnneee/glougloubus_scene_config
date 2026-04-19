@@ -91,6 +91,7 @@ const toggleOnion = document.getElementById('toggle-onion');
 const btnFullscreen = document.getElementById('btn-fullscreen');
 const cursorCoords = document.getElementById('cursor-coords');
 const selectionInfo = document.getElementById('selection-info');
+const btnDeleteSelected = document.getElementById('btn-delete-selected');
 
 // Zoom controls
 const btnZoomIn = document.getElementById('btn-zoom-in');
@@ -790,6 +791,7 @@ function updateSelectedItemProperties(e) {
 function updateSelectionUI() {
   if (selectedItemId) {
     selectionTools.style.display = 'flex';
+    if (btnDeleteSelected) btnDeleteSelected.hidden = false;
     if (selectionInfo) {
       const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
       if (item) {
@@ -799,6 +801,7 @@ function updateSelectionUI() {
     }
   } else {
     selectionTools.style.display = 'none';
+    if (btnDeleteSelected) btnDeleteSelected.hidden = true;
     if (selectionInfo) selectionInfo.textContent = '';
   }
 }
@@ -2374,6 +2377,9 @@ function initExtras() {
   if (btnUndo) btnUndo.addEventListener('click', undo);
   if (btnRedo) btnRedo.addEventListener('click', redo);
   updateUndoButtons();
+
+  // Bouton supprimer sélection (proche du canvas)
+  if (btnDeleteSelected) btnDeleteSelected.addEventListener('click', deleteSelectedItem);
 
   // Save/load project
   if (btnSaveProject) btnSaveProject.addEventListener('click', saveProjectToFile);
