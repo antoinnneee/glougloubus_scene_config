@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#0f172a" />
     <title>Glougloubus Scene Configurator</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="stylesheet" href="./style.css" />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono&family=Press+Start+2P&family=VT323&family=Silkscreen&family=Pixelify+Sans&family=Bungee&display=swap" rel="stylesheet">
   </head>
@@ -13,8 +14,21 @@
       <header class="app-header">
         <h1>🚍 Glougloubus Scene Configurator</h1>
         <div class="header-actions">
-          <span id="ble-status-text" class="ble-status">Not connected</span>
-          <button id="btn-connect-ble" class="btn outline">Connect BLE</button>
+          <div class="header-group">
+            <button id="btn-undo" class="btn outline icon-btn" title="Undo (Ctrl+Z)" aria-label="Undo">↶</button>
+            <button id="btn-redo" class="btn outline icon-btn" title="Redo (Ctrl+Shift+Z)" aria-label="Redo">↷</button>
+          </div>
+          <div class="header-group">
+            <button id="btn-new-project" class="btn outline" title="Nouveau projet">🆕</button>
+            <button id="btn-save-project" class="btn outline" title="Enregistrer projet (Ctrl+S)">💾</button>
+            <button id="btn-load-project" class="btn outline" title="Charger projet">📂</button>
+            <input type="file" id="file-load-project" accept=".json,application/json" hidden />
+          </div>
+          <div class="header-group">
+            <span id="ble-status-badge" class="ble-status-badge" data-state="disconnected" aria-hidden="true"></span>
+            <span id="ble-status-text" class="ble-status">Not connected</span>
+            <button id="btn-connect-ble" class="btn outline">Connect BLE</button>
+          </div>
         </div>
       </header>
 
@@ -22,17 +36,70 @@
         <div class="editor-column">
           <!-- Preview Panel -->
           <section class="panel preview-panel">
-            <h2>LED Matrix Preview (192 × 32)</h2>
-            <div class="canvas-container">
-              <canvas id="led-canvas" width="960" height="160"></canvas>
+            <div class="preview-header">
+              <h2>LED Matrix (192 × 32)</h2>
+              <div class="preview-meta">
+                <span id="cursor-coords" class="info-chip"></span>
+                <span id="selection-info" class="info-chip"></span>
+              </div>
             </div>
+            <div class="canvas-wrapper" id="canvas-wrapper">
+              <div class="canvas-container">
+                <canvas id="led-canvas" width="960" height="160"></canvas>
+              </div>
+            </div>
+
             <div class="preview-controls">
-              <button id="btn-play-pause" class="btn primary">Play</button>
+              <button id="btn-play-pause" class="btn primary" title="Play/Pause (Espace)">Play</button>
               <label class="fps-control">
                 <span>FPS</span>
                 <input type="number" inputmode="numeric" id="fps-input" value="20" min="1" max="60" />
               </label>
               <button id="btn-clear-canvas" class="btn outline danger">Clear Frame</button>
+              <button id="btn-fullscreen" class="btn outline" title="Plein écran">⛶</button>
+            </div>
+
+            <div class="preview-aux-row">
+              <div class="tool-controls aux-group">
+                <label class="aux-toggle">
+                  <input type="checkbox" id="toggle-onion" />
+                  <span>Onion-skin</span>
+                </label>
+                <label class="aux-toggle">
+                  <span>Snap</span>
+                  <select id="snap-select">
+                    <option value="0" selected>off</option>
+                    <option value="1">1 px</option>
+                    <option value="4">4 px</option>
+                    <option value="8">8 px</option>
+                    <option value="16">16 px</option>
+                  </select>
+                </label>
+              </div>
+              <div class="tool-controls zoom-controls">
+                <button id="btn-zoom-out" class="btn outline icon-btn" title="Zoom −">−</button>
+                <button id="btn-zoom-reset" class="btn outline" title="Reset zoom">1:1</button>
+                <button id="btn-zoom-in" class="btn outline icon-btn" title="Zoom +">+</button>
+              </div>
+            </div>
+          </section>
+
+          <!-- Tool selector (grid of tool buttons) -->
+          <section class="panel tool-selector-panel">
+            <div class="tool-selector">
+              <button class="tool-btn" data-tool="select" title="Sélection (V)">⟑</button>
+              <button class="tool-btn" data-tool="pencil" title="Pinceau">✏️</button>
+              <button class="tool-btn" data-tool="line" title="Ligne">/</button>
+              <button class="tool-btn" data-tool="rect" title="Rect plein">▣</button>
+              <button class="tool-btn" data-tool="rect-outline" title="Rect creux">▢</button>
+              <button class="tool-btn" data-tool="ellipse" title="Ellipse">◯</button>
+              <button class="tool-btn" data-tool="bucket" title="Remplissage">🪣</button>
+              <button class="tool-btn" data-tool="eyedropper" title="Pipette">💧</button>
+            </div>
+            <div class="palette-row">
+              <label>Brush</label>
+              <input type="color" id="pencil-color" value="#ff0000" />
+              <div id="palette-container" class="palette-container" aria-label="Couleurs récentes"></div>
             </div>
           </section>
 
@@ -75,7 +142,7 @@
               <!-- Animation Tool -->
               <details class="tool-group">
                 <summary>Animation Tool</summary>
-                <p class="helper-text">Sélectionne un item. Définis Start et End, puis génère les frames.</p>
+                <p class="helper-text">Sélectionne un item. Définis Start et End, puis génère.</p>
 
                 <div class="anim-block">
                   <div class="anim-block-title">Start</div>
@@ -113,15 +180,32 @@
                   </label>
                   <label><span>Value</span><input type="number" inputmode="numeric" id="anim-value" value="20" min="1"></label>
                 </div>
+                <div class="tool-controls">
+                  <label class="flex-grow">
+                    <span>Easing</span>
+                    <select id="anim-easing">
+                      <option value="linear" selected>Linear</option>
+                      <option value="ease-in">Ease-in</option>
+                      <option value="ease-out">Ease-out</option>
+                      <option value="ease-in-out">Ease-in-out</option>
+                      <option value="bounce">Bounce</option>
+                    </select>
+                  </label>
+                </div>
                 <button id="btn-generate-anim" class="btn secondary">Generate Anim Frames</button>
+
+                <div class="preset-grid">
+                  <button id="btn-preset-scroll-left" class="btn outline" title="Scroll de droite à gauche">↞ Scroll</button>
+                  <button id="btn-preset-scroll-right" class="btn outline" title="Scroll de gauche à droite">Scroll ↠</button>
+                  <button id="btn-preset-blink" class="btn outline">Blink</button>
+                  <button id="btn-preset-fadein" class="btn outline">Fade In</button>
+                  <button id="btn-preset-fadeout" class="btn outline">Fade Out</button>
+                </div>
               </details>
 
-              <!-- Pencil Tool -->
+              <!-- Pencil Tool (legacy standalone bouton maintenu pour compat) -->
               <details class="tool-group">
-                <summary>Pencil Tool</summary>
-                <div class="tool-controls">
-                  <label><span>Color</span><input type="color" id="pencil-color" value="#ff0000"></label>
-                </div>
+                <summary>Pencil (legacy)</summary>
                 <button id="btn-toggle-pencil" class="btn outline">Enable Pencil Mode</button>
               </details>
 
@@ -130,11 +214,30 @@
                 <summary>Image Import</summary>
                 <input type="file" id="image-upload" accept="image/*" />
                 <div class="tool-controls">
-                  <label><span>X Ofs</span><input type="number" inputmode="numeric" id="img-x" value="0"></label>
-                  <label><span>Y Ofs</span><input type="number" inputmode="numeric" id="img-y" value="0"></label>
+                  <label><span>X</span><input type="number" inputmode="numeric" id="img-x" value="0"></label>
+                  <label><span>Y</span><input type="number" inputmode="numeric" id="img-y" value="0"></label>
                   <label><span>Scale</span><input type="number" inputmode="decimal" id="img-scale" value="1.0" step="0.1" min="0.1"></label>
                 </div>
-                <button id="btn-apply-image" class="btn">Apply to Canvas</button>
+                <div class="tool-controls">
+                  <label class="flex-grow">
+                    <span>Dither</span>
+                    <select id="img-dither">
+                      <option value="none" selected>None</option>
+                      <option value="floyd-steinberg">Floyd-Steinberg</option>
+                    </select>
+                  </label>
+                  <label class="flex-grow">
+                    <span>Palette</span>
+                    <select id="img-palette">
+                      <option value="0" selected>Full</option>
+                      <option value="8">8 couleurs</option>
+                      <option value="16">16 couleurs</option>
+                      <option value="32">32 couleurs</option>
+                      <option value="64">64 couleurs</option>
+                    </select>
+                  </label>
+                </div>
+                <button id="btn-apply-image" class="btn">Add Image</button>
               </details>
 
               <!-- Export Vidéo -->
@@ -157,7 +260,9 @@
                   </label>
                 </div>
                 <button id="btn-export-video" class="btn export-btn">⬇ Exporter en .bin</button>
+                <button id="btn-export-gif" class="btn outline">🎞 Exporter en .gif</button>
                 <button id="btn-stream-ble" class="btn stream-btn" hidden>📶 Streamer via BLE</button>
+                <button id="btn-ble-test-pattern" class="btn outline" title="Envoie un damier pour tester mapping + connexion">🧪 Test Pattern BLE</button>
                 <div id="export-progress-container" class="progress-bar-container" hidden>
                   <div class="progress-bar-info">
                     <span id="export-status-text">Extraction des frames...</span>
