@@ -689,6 +689,7 @@ function handlePointerUp(e) {
   if (selectedItemId) {
     renderCanvas();
     updateTimelineThumb(currentFrameIndex);
+    updateSelectionUI();
   }
 }
 
