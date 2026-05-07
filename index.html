@@ -39,27 +39,12 @@
         <button id="btn-undo" class="iconbtn" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>↶</button>
         <button id="btn-redo" class="iconbtn" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" disabled>↷</button>
         <h1 class="brand">🚍 Glougloubus</h1>
+        <button id="btn-play-pause" class="btn primary play-btn" title="Play/Pause (Espace)">▶</button>
         <span id="ble-status-badge" class="ble-dot" data-state="disconnected" title="BLE" aria-hidden="true"></span>
         <button id="btn-fullscreen" class="iconbtn" title="Plein écran" aria-label="Plein écran">⛶</button>
       </header>
 
-      <!-- STAGE / CANVAS -->
-      <section class="stage">
-        <div class="canvas-wrapper" id="canvas-wrapper">
-          <div class="canvas-container">
-            <canvas id="led-canvas" width="960" height="160"></canvas>
-          </div>
-        </div>
-        <div class="canvas-toolbar">
-          <button id="btn-delete-selected" class="iconbtn danger" disabled title="Supprimer la sélection (Del)" aria-label="Supprimer">🗑</button>
-          <span class="spacer"></span>
-          <button id="btn-zoom-out" class="iconbtn" title="Zoom −" aria-label="Zoom out">−</button>
-          <button id="btn-zoom-reset" class="iconbtn" title="Reset zoom" aria-label="Reset zoom">1:1</button>
-          <button id="btn-zoom-in" class="iconbtn" title="Zoom +" aria-label="Zoom in">+</button>
-        </div>
-      </section>
-
-      <!-- TOOL DOCK -->
+      <!-- TOOL DOCK : déplacé en haut (juste sous le topbar) -->
       <section class="dock">
         <div class="tool-selector">
           <button class="tool-btn" data-tool="select" title="Sélection (V)" aria-label="Select">⟑</button>
@@ -77,21 +62,20 @@
         </div>
       </section>
 
-      <!-- FRAME STRIP -->
-      <section class="strip">
-        <div class="strip-controls">
-          <button id="btn-play-pause" class="btn primary play-btn" title="Play/Pause (Espace)">▶</button>
-          <label class="fps-control" title="Frames per second">
-            <span>FPS</span>
-            <input type="number" inputmode="numeric" id="fps-input" value="20" min="1" max="60" />
-          </label>
-          <span class="spacer"></span>
-          <button id="btn-add-frame" class="iconbtn" title="Ajouter frame" aria-label="Ajouter">＋</button>
-          <button id="btn-dup-frame" class="iconbtn" title="Dupliquer frame" aria-label="Dupliquer">⎘</button>
-          <button id="btn-del-frame" class="iconbtn danger" title="Supprimer frame" aria-label="Supprimer frame">−</button>
-          <button id="btn-clear-canvas" class="iconbtn" title="Vider frame" aria-label="Vider la frame">⌫</button>
+      <!-- STAGE / CANVAS -->
+      <section class="stage">
+        <div class="canvas-wrapper" id="canvas-wrapper">
+          <div class="canvas-container">
+            <canvas id="led-canvas" width="960" height="160"></canvas>
+          </div>
         </div>
-        <div class="timeline-frames" id="timeline-container"></div>
+        <div class="canvas-toolbar">
+          <button id="btn-delete-selected" class="iconbtn danger" disabled title="Supprimer la sélection (Del)" aria-label="Supprimer">🗑</button>
+          <span class="spacer"></span>
+          <button id="btn-zoom-out" class="iconbtn" title="Zoom −" aria-label="Zoom out">−</button>
+          <button id="btn-zoom-reset" class="iconbtn" title="Reset zoom" aria-label="Reset zoom">1:1</button>
+          <button id="btn-zoom-in" class="iconbtn" title="Zoom +" aria-label="Zoom in">+</button>
+        </div>
       </section>
 
       <!-- BOTTOM SHEET -->
@@ -99,7 +83,8 @@
         <div class="sheet-handle" id="sheet-handle">
           <div class="grip"></div>
           <div class="sheet-tabs" id="sheet-tabs" role="tablist">
-            <button class="tab active" data-tab="layers" role="tab">🗂 Calques</button>
+            <button class="tab active" data-tab="timeline" role="tab">⏱ Timeline</button>
+            <button class="tab" data-tab="layers" role="tab">🗂 Calques</button>
             <button class="tab" data-tab="props" role="tab">⚙ Props</button>
             <button class="tab" data-tab="text" role="tab">🅣 Texte</button>
             <button class="tab" data-tab="image" role="tab">🖼 Image</button>
@@ -111,8 +96,24 @@
 
         <div class="sheet-body">
 
+          <!-- PANE: Timeline (frame controls + global timeline) -->
+          <div class="tab-pane active" data-pane="timeline" role="tabpanel">
+            <div class="strip-controls">
+              <label class="fps-control" title="Frames per second">
+                <span>FPS</span>
+                <input type="number" inputmode="numeric" id="fps-input" value="20" min="1" max="60" />
+              </label>
+              <span class="spacer"></span>
+              <button id="btn-add-frame" class="iconbtn" title="Ajouter frame" aria-label="Ajouter">＋</button>
+              <button id="btn-dup-frame" class="iconbtn" title="Dupliquer frame" aria-label="Dupliquer">⎘</button>
+              <button id="btn-del-frame" class="iconbtn danger" title="Supprimer frame" aria-label="Supprimer frame">−</button>
+              <button id="btn-clear-canvas" class="iconbtn" title="Vider frame" aria-label="Vider la frame">⌫</button>
+            </div>
+            <div id="timeline-container"></div>
+          </div>
+
           <!-- PANE: Calques (layers panel) -->
-          <div class="tab-pane active" data-pane="layers" role="tabpanel">
+          <div class="tab-pane" data-pane="layers" role="tabpanel" hidden>
             <div class="layers-toolbar">
               <span class="layers-count" id="layers-count">0 objet</span>
               <span class="spacer"></span>

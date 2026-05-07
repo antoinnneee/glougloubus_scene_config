@@ -16,17 +16,16 @@
 
   --topbar-h: 48px;
   --dock-h: 100px;
-  --strip-h: 110px;
   --sheet-handle-h: 60px;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-top: env(safe-area-inset-top, 0px);
 
   /* Available height for the canvas itself = viewport minus all chrome
-     (topbar + dock + strip + sheet handle + safe areas + stage padding
-     + canvas-toolbar). Used by .canvas-container to scale width so the
-     canvas fills the stage on both axes (rather than just hugging width). */
+     (topbar + dock + sheet handle + safe areas + stage padding +
+     canvas-toolbar). La frame strip a été migrée en onglet "Timeline" du
+     bottom-sheet en Phase 6+, donc plus de --strip-h. */
   --canvas-toolbar-h: 44px;
-  --stage-h: calc(100dvh - var(--topbar-h) - var(--dock-h) - var(--strip-h) - var(--sheet-handle-h) - var(--safe-top) - var(--safe-bottom) - var(--canvas-toolbar-h) - 1.5rem);
+  --stage-h: calc(100dvh - var(--topbar-h) - var(--dock-h) - var(--sheet-handle-h) - var(--safe-top) - var(--safe-bottom) - var(--canvas-toolbar-h) - 1.5rem);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }

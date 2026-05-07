@@ -2,7 +2,10 @@
 
 .app-shell {
   display: grid;
-  grid-template-rows: var(--topbar-h) 1fr var(--dock-h) var(--strip-h);
+  /* Ordre vertical : topbar, dock (outils), stage (canvas, 1fr).
+     La frame strip a été migrée en onglet "Timeline" du bottom-sheet, donc
+     pas de ligne dédiée. */
+  grid-template-rows: var(--topbar-h) var(--dock-h) 1fr;
   height: 100dvh;
   padding-top: var(--safe-top);
   /* Reserve space for the sticky sheet handle (visible when sheet is closed/peek) */
@@ -105,7 +108,8 @@
   gap: 0.45rem;
   padding: 0.5rem 0.6rem;
   background: var(--bg-panel);
-  border-top: 1px solid rgba(255,255,255,0.06);
+  /* Dock placé en HAUT sous le topbar : bordure inférieure (pas supérieure) */
+  border-bottom: 1px solid rgba(255,255,255,0.06);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
 }
@@ -165,27 +169,17 @@
 }
 .palette-chip:active { transform: scale(0.92); }
 
-/* ============== STRIP : CONTROLS + TIMELINE ============== */
-.strip {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-  padding: 0.45rem 0.6rem 0.5rem;
-  background: var(--bg-panel);
-  border-top: 1px solid rgba(255,255,255,0.06);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  min-width: 0;       /* empêche l'item de grille de s'étirer au-delà de la colonne */
-  overflow: hidden;   /* clip tout débordement résiduel */
-}
+/* ============== TIMELINE TAB CONTROLS (déplacé du strip vers la sheet) ============== */
 .strip-controls {
   display: flex;
   gap: 0.35rem;
   align-items: center;
+  flex-wrap: wrap;
 }
 .strip-controls .spacer { flex: 1; }
 .play-btn {
-  min-width: 44px; min-height: 36px;
+  min-width: 44px;
+  min-height: 36px;
   padding: 0 0.7rem;
   font-size: 1rem;
 }
@@ -197,60 +191,6 @@
   color: var(--text-muted);
 }
 .fps-control input { width: 52px; height: 36px; padding: 0.3rem 0.4rem; }
-
-.timeline-frames {
-  display: flex;
-  gap: 0.4rem;
-  overflow-x: auto;
-  overflow-y: hidden;
-  -webkit-overflow-scrolling: touch;
-  scroll-snap-type: x proximity;
-  padding-bottom: 4px;
-  margin: 0 -0.2rem;
-  padding-left: 0.2rem;
-  padding-right: 0.2rem;
-}
-.timeline-frames::-webkit-scrollbar { height: 4px; }
-.timeline-frames::-webkit-scrollbar-thumb {
-  background: var(--bg-secondary);
-  border-radius: 4px;
-}
-
-.frame-thumb-container {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.2rem;
-  cursor: pointer;
-  flex: 0 0 auto;
-  min-width: 96px;
-  padding: 0.2rem;
-  border-radius: 6px;
-  scroll-snap-align: start;
-}
-.frame-thumb {
-  width: 96px;
-  height: 16px;
-  background: black;
-  border: 2px solid transparent;
-  border-radius: 4px;
-  image-rendering: pixelated;
-  transition: border-color 0.15s, box-shadow 0.15s;
-}
-.frame-thumb-container.active .frame-thumb {
-  border-color: var(--accent-color);
-  box-shadow: 0 0 8px rgba(59,130,246,0.5);
-}
-.frame-thumb-label {
-  font-size: 0.7rem;
-  color: var(--text-muted);
-}
-.frame-thumb-container.active .frame-thumb-label {
-  color: var(--accent-color);
-  font-weight: 600;
-}
-.frame-thumb-container.dragging { opacity: 0.4; }
-.frame-thumb-container.drop-target { outline: 2px dashed var(--accent-color); outline-offset: 2px; }
 
 /* ============== GLOBAL TIMELINE (Phase 6) ============== */
 /* Posée dans #timeline-container quand le mode timeline est actif. Le mode
@@ -386,17 +326,9 @@
 .gtl-dot:hover { background: var(--accent-color); }
 .gtl-dot:active { cursor: grabbing; transform: translate(-50%, -50%) scale(1.25); }
 
-/* Bouton bascule mode timeline / thumbs */
-.gtl-mode-toggle.active {
-  background: var(--accent-color);
-  color: white;
-  border-color: var(--accent-hover);
-}
-
 /* ============== PREVIEW (FULLSCREEN) ============== */
 body.preview-mode .topbar,
 body.preview-mode .dock,
-body.preview-mode .strip,
 body.preview-mode .sheet,
 body.preview-mode .canvas-toolbar { display: none !important; }
 body.preview-mode .app-shell {
@@ -410,11 +342,8 @@ body.preview-mode .stage { padding: 0; background: #000; }
   :root {
     --topbar-h: 56px;
     --dock-h: 110px;
-    --strip-h: 140px;
   }
   .brand { font-size: 1.15rem; }
-  .frame-thumb { width: 138px; height: 23px; }
-  .frame-thumb-container { min-width: 138px; }
   .tool-selector { gap: 0.4rem; }
   .palette-row { flex-wrap: wrap; }
   .palette-container { flex-wrap: wrap; flex: 1; }
@@ -428,10 +357,7 @@ body.preview-mode .stage { padding: 0; background: #000; }
   :root {
     --topbar-h: 40px;
     --dock-h: 84px;
-    --strip-h: 88px;
     --sheet-handle-h: 50px;
   }
   .brand { font-size: 0.85rem; }
-  .frame-thumb { width: 80px; height: 14px; }
-  .frame-thumb-container { min-width: 80px; }
 }

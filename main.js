@@ -3104,7 +3104,10 @@ function initExtras() {
   if (btnLayerUngroup) btnLayerUngroup.addEventListener('click', ungroupSelection);
 
   // Bottom sheet (mobile UI)
-  initBottomSheet({ onTabChange: tab => { if (tab === 'anim') updateKeyframeEditor(); } });
+  initBottomSheet({ onTabChange: tab => {
+    if (tab === 'anim') updateKeyframeEditor();
+    if (tab === 'timeline') renderTimeline();
+  }});
 
   // Autosave restore + register PWA
   tryRestoreAutosave();
