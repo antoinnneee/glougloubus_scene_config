@@ -264,10 +264,10 @@
 .gtl-lanes {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  max-height: 160px;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
+  gap: 1px;
+  /* Pas de max-height ni overflow ici : on veut que toutes les lanes soient
+     visibles d'un coup quand un objet est sélectionné. La sheet parent gère
+     son propre scroll si nécessaire. */
 }
 .gtl-hint {
   font-size: 0.72rem;
@@ -279,21 +279,22 @@
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  height: 18px;
+  height: 16px;
 }
 .gtl-track-label {
-  width: 3.4rem;
-  font-size: 0.65rem;
+  width: 3.2rem;
+  font-size: 0.62rem;
   color: var(--text-muted);
   text-align: right;
   flex-shrink: 0;
   font-family: 'JetBrains Mono', monospace;
   letter-spacing: -0.02em;
+  line-height: 1;
 }
 .gtl-lane {
   position: relative;
   flex: 1;
-  height: 18px;
+  height: 16px;
   cursor: pointer;
   touch-action: none;
 }
@@ -320,11 +321,11 @@
 .gtl-dot {
   position: absolute;
   top: 50%;
-  width: 9px;
-  height: 9px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--text-main);
-  border: 2px solid var(--bg-primary);
+  border: 1.5px solid var(--bg-primary);
   transform: translate(-50%, -50%);
   cursor: grab;
   touch-action: none;
