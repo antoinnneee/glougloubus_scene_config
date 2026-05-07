@@ -2,300 +2,319 @@
 <html lang="fr">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
     <meta name="theme-color" content="#0f172a" />
-    <title>Glougloubus Scene Configurator</title>
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>Glougloubus</title>
     <link rel="manifest" href="./manifest.webmanifest" />
-    <link rel="stylesheet" href="./style.css" />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono&family=Press+Start+2P&family=VT323&family=Silkscreen&family=Pixelify+Sans&family=Bungee&display=swap" rel="stylesheet">
+    <script>
+      // One-shot SW eviction : si l'ancien service-worker (cache v1) est encore
+      // installé, désinscris-le + vide tous les caches + reload pour récupérer
+      // les nouveaux assets servis par le réseau / Vite.
+      (async () => {
+        if (!('serviceWorker' in navigator)) return;
+        const evictedKey = 'glougloubus-sw-evicted-v2';
+        if (sessionStorage.getItem(evictedKey)) return;
+        try {
+          const regs = await navigator.serviceWorker.getRegistrations();
+          if (regs.length === 0) return;
+          await Promise.all(regs.map(r => r.unregister()));
+          if (window.caches) {
+            const keys = await caches.keys();
+            await Promise.all(keys.map(k => caches.delete(k)));
+          }
+          sessionStorage.setItem(evictedKey, '1');
+          location.reload();
+        } catch {}
+      })();
+    </script>
   </head>
   <body>
-    <div class="app-container">
-      <header class="app-header">
-        <h1>🚍 Glougloubus Scene Configurator</h1>
-        <div class="header-actions">
-          <div class="header-group">
-            <button id="btn-undo" class="btn outline icon-btn" title="Undo (Ctrl+Z)" aria-label="Undo">↶</button>
-            <button id="btn-redo" class="btn outline icon-btn" title="Redo (Ctrl+Shift+Z)" aria-label="Redo">↷</button>
-          </div>
-          <div class="header-group">
-            <button id="btn-new-project" class="btn outline" title="Nouveau projet">🆕</button>
-            <button id="btn-save-project" class="btn outline" title="Enregistrer projet (Ctrl+S)">💾</button>
-            <button id="btn-load-project" class="btn outline" title="Charger projet">📂</button>
-            <input type="file" id="file-load-project" accept=".json,application/json" hidden />
-          </div>
-          <div class="header-group">
-            <span id="ble-status-badge" class="ble-status-badge" data-state="disconnected" aria-hidden="true"></span>
-            <span id="ble-status-text" class="ble-status">Not connected</span>
-            <button id="btn-connect-ble" class="btn outline">Connect BLE</button>
-          </div>
-        </div>
+    <div class="app-shell">
+
+      <!-- TOP BAR -->
+      <header class="topbar">
+        <button id="btn-undo" class="iconbtn" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>↶</button>
+        <button id="btn-redo" class="iconbtn" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" disabled>↷</button>
+        <h1 class="brand">🚍 Glougloubus</h1>
+        <span id="ble-status-badge" class="ble-dot" data-state="disconnected" title="BLE" aria-hidden="true"></span>
+        <button id="btn-fullscreen" class="iconbtn" title="Plein écran" aria-label="Plein écran">⛶</button>
       </header>
 
-      <main class="main-content">
-        <div class="editor-column">
-          <!-- Preview Panel -->
-          <section class="panel preview-panel">
-            <div class="preview-header">
-              <h2>LED Matrix (192 × 32)</h2>
-              <div class="preview-meta">
-                <button id="btn-delete-selected" class="btn danger icon-btn" disabled title="Supprimer la sélection (Del)" aria-label="Supprimer la sélection">🗑️</button>
-              </div>
-            </div>
-            <div class="canvas-wrapper" id="canvas-wrapper">
-              <div class="canvas-container">
-                <canvas id="led-canvas" width="960" height="160"></canvas>
-              </div>
-            </div>
+      <!-- STAGE / CANVAS -->
+      <section class="stage">
+        <div class="canvas-wrapper" id="canvas-wrapper">
+          <div class="canvas-container">
+            <canvas id="led-canvas" width="960" height="160"></canvas>
+          </div>
+        </div>
+        <div class="canvas-toolbar">
+          <button id="btn-delete-selected" class="iconbtn danger" disabled title="Supprimer la sélection (Del)" aria-label="Supprimer">🗑</button>
+          <span class="spacer"></span>
+          <button id="btn-zoom-out" class="iconbtn" title="Zoom −" aria-label="Zoom out">−</button>
+          <button id="btn-zoom-reset" class="iconbtn" title="Reset zoom" aria-label="Reset zoom">1:1</button>
+          <button id="btn-zoom-in" class="iconbtn" title="Zoom +" aria-label="Zoom in">+</button>
+        </div>
+      </section>
 
-            <div class="preview-controls">
-              <button id="btn-play-pause" class="btn primary" title="Play/Pause (Espace)">Play</button>
-              <label class="fps-control">
-                <span>FPS</span>
-                <input type="number" inputmode="numeric" id="fps-input" value="20" min="1" max="60" />
-              </label>
-              <button id="btn-clear-canvas" class="btn outline danger">Clear Frame</button>
-              <button id="btn-fullscreen" class="btn outline" title="Plein écran">⛶</button>
-            </div>
+      <!-- TOOL DOCK -->
+      <section class="dock">
+        <div class="tool-selector">
+          <button class="tool-btn" data-tool="select" title="Sélection (V)" aria-label="Select">⟑</button>
+          <button class="tool-btn" data-tool="pencil" title="Pinceau" aria-label="Pencil">✏️</button>
+          <button class="tool-btn" data-tool="line" title="Ligne" aria-label="Line">/</button>
+          <button class="tool-btn" data-tool="rect" title="Rect plein" aria-label="Rectangle">▣</button>
+          <button class="tool-btn" data-tool="rect-outline" title="Rect creux" aria-label="Rectangle outline">▢</button>
+          <button class="tool-btn" data-tool="ellipse" title="Ellipse" aria-label="Ellipse">◯</button>
+          <button class="tool-btn" data-tool="bucket" title="Remplissage" aria-label="Bucket">🪣</button>
+          <button class="tool-btn" data-tool="eyedropper" title="Pipette" aria-label="Eyedropper">💧</button>
+        </div>
+        <div class="palette-row">
+          <input type="color" id="pencil-color" value="#ff0000" aria-label="Couleur du pinceau" />
+          <div id="palette-container" class="palette-container" aria-label="Couleurs récentes"></div>
+        </div>
+      </section>
 
-            <div class="preview-aux-row">
-              <div class="tool-controls aux-group">
-                <label class="aux-toggle">
-                  <input type="checkbox" id="toggle-onion" />
-                  <span>Onion-skin</span>
-                </label>
-                <label class="aux-toggle">
-                  <span>Snap</span>
-                  <select id="snap-select">
-                    <option value="0" selected>off</option>
-                    <option value="1">1 px</option>
-                    <option value="4">4 px</option>
-                    <option value="8">8 px</option>
-                    <option value="16">16 px</option>
-                  </select>
-                </label>
-              </div>
-              <div class="tool-controls zoom-controls">
-                <button id="btn-zoom-out" class="btn outline icon-btn" title="Zoom −">−</button>
-                <button id="btn-zoom-reset" class="btn outline" title="Reset zoom">1:1</button>
-                <button id="btn-zoom-in" class="btn outline icon-btn" title="Zoom +">+</button>
-              </div>
-            </div>
-          </section>
+      <!-- FRAME STRIP -->
+      <section class="strip">
+        <div class="strip-controls">
+          <button id="btn-play-pause" class="btn primary play-btn" title="Play/Pause (Espace)">▶</button>
+          <label class="fps-control" title="Frames per second">
+            <span>FPS</span>
+            <input type="number" inputmode="numeric" id="fps-input" value="20" min="1" max="60" />
+          </label>
+          <span class="spacer"></span>
+          <button id="btn-add-frame" class="iconbtn" title="Ajouter frame" aria-label="Ajouter">＋</button>
+          <button id="btn-dup-frame" class="iconbtn" title="Dupliquer frame" aria-label="Dupliquer">⎘</button>
+          <button id="btn-del-frame" class="iconbtn danger" title="Supprimer frame" aria-label="Supprimer frame">−</button>
+          <button id="btn-clear-canvas" class="iconbtn" title="Vider frame" aria-label="Vider la frame">⌫</button>
+        </div>
+        <div class="timeline-frames" id="timeline-container"></div>
+      </section>
 
-          <!-- Tool selector (grid of tool buttons) -->
-          <section class="panel tool-selector-panel">
-            <div class="tool-selector">
-              <button class="tool-btn" data-tool="select" title="Sélection (V)">⟑</button>
-              <button class="tool-btn" data-tool="pencil" title="Pinceau">✏️</button>
-              <button class="tool-btn" data-tool="line" title="Ligne">/</button>
-              <button class="tool-btn" data-tool="rect" title="Rect plein">▣</button>
-              <button class="tool-btn" data-tool="rect-outline" title="Rect creux">▢</button>
-              <button class="tool-btn" data-tool="ellipse" title="Ellipse">◯</button>
-              <button class="tool-btn" data-tool="bucket" title="Remplissage">🪣</button>
-              <button class="tool-btn" data-tool="eyedropper" title="Pipette">💧</button>
-            </div>
-            <div class="palette-row">
-              <label>Brush</label>
-              <input type="color" id="pencil-color" value="#ff0000" />
-              <div id="palette-container" class="palette-container" aria-label="Couleurs récentes"></div>
-            </div>
-          </section>
-
-          <!-- Tools Panel -->
-          <section class="panel tools-panel">
-            <h2>Tools</h2>
-            <div class="tool-groups-container">
-
-              <!-- Text Tool -->
-              <details class="tool-group" open>
-                <summary>Text Tool</summary>
-                <div class="tool-controls">
-                  <input type="text" id="text-input" placeholder="Enter text..." class="flex-grow" />
-                </div>
-                <div class="tool-controls">
-                  <label class="flex-grow">
-                    <span>Font</span>
-                    <select id="text-font">
-                      <option value='"JetBrains Mono", monospace' selected>JetBrains Mono</option>
-                      <option value='"Press Start 2P", cursive'>Press Start 2P</option>
-                      <option value='"VT323", monospace'>VT323 (Terminal)</option>
-                      <option value='"Silkscreen", cursive'>Silkscreen</option>
-                      <option value='"Pixelify Sans", sans-serif'>Pixelify Sans</option>
-                      <option value='"Bungee", cursive'>Bungee</option>
-                      <option value='"Inter", sans-serif'>Inter</option>
-                      <option value='Arial, sans-serif'>Arial</option>
-                      <option value='"Courier New", monospace'>Courier New</option>
-                    </select>
-                  </label>
-                </div>
-                <div class="tool-controls">
-                  <label><span>Color</span><input type="color" id="text-color" value="#ffffff"></label>
-                  <label><span>Size</span><input type="number" inputmode="numeric" id="text-size" value="16" min="1"></label>
-                  <label><span>X</span><input type="number" inputmode="numeric" id="text-x" value="0"></label>
-                  <label><span>Y</span><input type="number" inputmode="numeric" id="text-y" value="16"></label>
-                </div>
-                <button id="btn-apply-text" class="btn">Draw Text</button>
-              </details>
-
-              <!-- Animation Tool -->
-              <details class="tool-group">
-                <summary>Animation Tool</summary>
-                <p class="helper-text">Sélectionne un item. Définis Start et End, puis génère.</p>
-
-                <div class="anim-block">
-                  <div class="anim-block-title">Start</div>
-                  <div class="tool-controls">
-                    <label><span>X</span><input type="number" inputmode="numeric" id="anim-start-x" value="0"></label>
-                    <label><span>Y</span><input type="number" inputmode="numeric" id="anim-start-y" value="0"></label>
-                    <label><span>Color</span><input type="color" id="anim-start-color" value="#ffffff"></label>
-                  </div>
-                  <div class="tool-controls btn-row">
-                    <button id="btn-anim-set-start" class="btn outline">Capture</button>
-                    <button id="btn-anim-apply-start" class="btn outline">Apply</button>
-                  </div>
-                </div>
-
-                <div class="anim-block">
-                  <div class="anim-block-title">End</div>
-                  <div class="tool-controls">
-                    <label><span>X</span><input type="number" inputmode="numeric" id="anim-end-x" value="100"></label>
-                    <label><span>Y</span><input type="number" inputmode="numeric" id="anim-end-y" value="0"></label>
-                    <label><span>Color</span><input type="color" id="anim-end-color" value="#ffffff"></label>
-                  </div>
-                  <div class="tool-controls btn-row">
-                    <button id="btn-anim-set-end" class="btn outline">Capture</button>
-                    <button id="btn-anim-apply-end" class="btn outline">Apply</button>
-                  </div>
-                </div>
-
-                <div class="tool-controls">
-                  <label class="flex-grow">
-                    <span>Mode</span>
-                    <select id="anim-mode">
-                      <option value="duration">Frames (Duration)</option>
-                      <option value="speed">px/frame (Speed)</option>
-                    </select>
-                  </label>
-                  <label><span>Value</span><input type="number" inputmode="numeric" id="anim-value" value="20" min="1"></label>
-                </div>
-                <div class="tool-controls">
-                  <label class="flex-grow">
-                    <span>Easing</span>
-                    <select id="anim-easing">
-                      <option value="linear" selected>Linear</option>
-                      <option value="ease-in">Ease-in</option>
-                      <option value="ease-out">Ease-out</option>
-                      <option value="ease-in-out">Ease-in-out</option>
-                      <option value="bounce">Bounce</option>
-                    </select>
-                  </label>
-                </div>
-                <button id="btn-generate-anim" class="btn secondary">Generate Anim Frames</button>
-
-                <div class="preset-grid">
-                  <button id="btn-preset-scroll-left" class="btn outline" title="Scroll de droite à gauche">↞ Scroll</button>
-                  <button id="btn-preset-scroll-right" class="btn outline" title="Scroll de gauche à droite">Scroll ↠</button>
-                  <button id="btn-preset-blink" class="btn outline">Blink</button>
-                  <button id="btn-preset-fadein" class="btn outline">Fade In</button>
-                  <button id="btn-preset-fadeout" class="btn outline">Fade Out</button>
-                </div>
-              </details>
-
-              <!-- Pencil Tool (legacy standalone bouton maintenu pour compat) -->
-              <details class="tool-group">
-                <summary>Pencil (legacy)</summary>
-                <button id="btn-toggle-pencil" class="btn outline">Enable Pencil Mode</button>
-              </details>
-
-              <!-- Image Import -->
-              <details class="tool-group">
-                <summary>Image Import</summary>
-                <input type="file" id="image-upload" accept="image/*" />
-                <div class="tool-controls">
-                  <label><span>X</span><input type="number" inputmode="numeric" id="img-x" value="0"></label>
-                  <label><span>Y</span><input type="number" inputmode="numeric" id="img-y" value="0"></label>
-                  <label><span>Scale</span><input type="number" inputmode="decimal" id="img-scale" value="1.0" step="0.1" min="0.1"></label>
-                </div>
-                <div class="tool-controls">
-                  <label class="flex-grow">
-                    <span>Dither</span>
-                    <select id="img-dither">
-                      <option value="none" selected>None</option>
-                      <option value="floyd-steinberg">Floyd-Steinberg</option>
-                    </select>
-                  </label>
-                  <label class="flex-grow">
-                    <span>Palette</span>
-                    <select id="img-palette">
-                      <option value="0" selected>Full</option>
-                      <option value="8">8 couleurs</option>
-                      <option value="16">16 couleurs</option>
-                      <option value="32">32 couleurs</option>
-                      <option value="64">64 couleurs</option>
-                    </select>
-                  </label>
-                </div>
-                <button id="btn-apply-image" class="btn">Add Image</button>
-              </details>
-
-              <!-- Export Vidéo -->
-              <details class="tool-group export-group" open>
-                <summary>📹 Export Vidéo (.bin)</summary>
-                <div class="tool-controls">
-                  <label class="flex-grow">
-                    <span>Nom</span>
-                    <input type="text" id="export-filename" value="video" placeholder="video" />
-                  </label>
-                  <span class="ext-hint">.bin</span>
-                </div>
-                <div class="tool-controls">
-                  <label class="flex-grow">
-                    <span>Mapping</span>
-                    <select id="export-mapping">
-                      <option value="linear">Classique (Ligne par ligne)</option>
-                      <option value="custom" selected>Grille 24 Panneaux (12×2)</option>
-                    </select>
-                  </label>
-                </div>
-                <button id="btn-export-video" class="btn export-btn">⬇ Exporter en .bin</button>
-                <button id="btn-export-gif" class="btn outline">🎞 Exporter en .gif</button>
-                <button id="btn-stream-ble" class="btn stream-btn" hidden>📶 Streamer via BLE</button>
-                <button id="btn-ble-test-pattern" class="btn outline" title="Envoie un damier pour tester mapping + connexion">🧪 Test Pattern BLE</button>
-                <div id="export-progress-container" class="progress-bar-container" hidden>
-                  <div class="progress-bar-info">
-                    <span id="export-status-text">Extraction des frames...</span>
-                    <span id="export-progress-text">0%</span>
-                  </div>
-                  <div class="progress-bar-track">
-                    <div id="export-progress-bar" class="progress-bar-fill"></div>
-                  </div>
-                </div>
-              </details>
-
-              <!-- Selection Active -->
-              <div class="tool-group selection-tools" id="selection-tools" hidden>
-                <div class="tool-group-title">Active Selection</div>
-                <button id="btn-delete-item" class="btn outline danger">Delete Selected Item</button>
-              </div>
-
-            </div>
-          </section>
+      <!-- BOTTOM SHEET -->
+      <section class="sheet" id="bottom-sheet" data-state="peek" aria-label="Panneau d'outils">
+        <div class="sheet-handle" id="sheet-handle">
+          <div class="grip"></div>
+          <div class="sheet-tabs" id="sheet-tabs" role="tablist">
+            <button class="tab active" data-tab="props" role="tab">⚙ Props</button>
+            <button class="tab" data-tab="text" role="tab">🅣 Texte</button>
+            <button class="tab" data-tab="image" role="tab">🖼 Image</button>
+            <button class="tab" data-tab="anim" role="tab">▶ Anim</button>
+            <button class="tab" data-tab="export" role="tab">⬇ Export</button>
+            <button class="tab" data-tab="project" role="tab">💾 Projet</button>
+          </div>
         </div>
 
-        <!-- Timeline Panel -->
-        <section class="panel timeline-panel">
-          <div class="timeline-header">
-            <h2>Frames</h2>
-            <div class="timeline-actions">
-              <button id="btn-add-frame" class="btn">Add</button>
-              <button id="btn-dup-frame" class="btn">Dup</button>
-              <button id="btn-del-frame" class="btn danger outline">Del</button>
+        <div class="sheet-body">
+
+          <!-- PANE: Props (canvas options + selection editor) -->
+          <div class="tab-pane active" data-pane="props" role="tabpanel">
+            <div class="row aux-row">
+              <label class="aux-toggle">
+                <input type="checkbox" id="toggle-onion" />
+                <span>Onion-skin</span>
+              </label>
+              <label class="aux-toggle">
+                <span>Snap</span>
+                <select id="snap-select">
+                  <option value="0" selected>off</option>
+                  <option value="1">1 px</option>
+                  <option value="4">4 px</option>
+                  <option value="8">8 px</option>
+                  <option value="16">16 px</option>
+                </select>
+              </label>
+            </div>
+            <div id="selection-tools" class="selection-tools" hidden>
+              <div class="section-title">Sélection active</div>
+              <button id="btn-delete-item" class="btn danger">Supprimer l'item sélectionné</button>
+            </div>
+            <p class="hint">Astuce&nbsp;: tape sur un item pour le sélectionner. Pince à 2 doigts pour zoomer la vue ou redimensionner l'item sélectionné.</p>
+          </div>
+
+          <!-- PANE: Texte -->
+          <div class="tab-pane" data-pane="text" role="tabpanel" hidden>
+            <input type="text" id="text-input" placeholder="Texte à afficher…" />
+            <div class="row">
+              <label class="grow">
+                <span>Font</span>
+                <select id="text-font">
+                  <option value='"JetBrains Mono", monospace' selected>JetBrains Mono</option>
+                  <option value='"Press Start 2P", cursive'>Press Start 2P</option>
+                  <option value='"VT323", monospace'>VT323</option>
+                  <option value='"Silkscreen", cursive'>Silkscreen</option>
+                  <option value='"Pixelify Sans", sans-serif'>Pixelify Sans</option>
+                  <option value='"Bungee", cursive'>Bungee</option>
+                  <option value='"Inter", sans-serif'>Inter</option>
+                  <option value='Arial, sans-serif'>Arial</option>
+                  <option value='"Courier New", monospace'>Courier New</option>
+                </select>
+              </label>
+            </div>
+            <div class="row">
+              <label><span>Color</span><input type="color" id="text-color" value="#ffffff"></label>
+              <label><span>Size</span><input type="number" inputmode="numeric" id="text-size" value="16" min="1"></label>
+              <label><span>X</span><input type="number" inputmode="numeric" id="text-x" value="0"></label>
+              <label><span>Y</span><input type="number" inputmode="numeric" id="text-y" value="16"></label>
+            </div>
+            <button id="btn-apply-text" class="btn primary">Ajouter le texte</button>
+          </div>
+
+          <!-- PANE: Image -->
+          <div class="tab-pane" data-pane="image" role="tabpanel" hidden>
+            <input type="file" id="image-upload" accept="image/*" />
+            <div class="row">
+              <label><span>X</span><input type="number" inputmode="numeric" id="img-x" value="0"></label>
+              <label><span>Y</span><input type="number" inputmode="numeric" id="img-y" value="0"></label>
+              <label><span>Scale</span><input type="number" inputmode="decimal" id="img-scale" value="1.0" step="0.1" min="0.1"></label>
+            </div>
+            <div class="row">
+              <label class="grow">
+                <span>Dither</span>
+                <select id="img-dither">
+                  <option value="none" selected>None</option>
+                  <option value="floyd-steinberg">Floyd-Steinberg</option>
+                </select>
+              </label>
+              <label class="grow">
+                <span>Palette</span>
+                <select id="img-palette">
+                  <option value="0" selected>Full</option>
+                  <option value="8">8 couleurs</option>
+                  <option value="16">16 couleurs</option>
+                  <option value="32">32 couleurs</option>
+                  <option value="64">64 couleurs</option>
+                </select>
+              </label>
+            </div>
+            <button id="btn-apply-image" class="btn primary">Ajouter l'image</button>
+          </div>
+
+          <!-- PANE: Animation -->
+          <div class="tab-pane" data-pane="anim" role="tabpanel" hidden>
+            <p class="hint">Sélectionne un item, capture Start et End, puis génère.</p>
+
+            <div class="anim-block">
+              <div class="anim-title">Start</div>
+              <div class="row">
+                <label><span>X</span><input type="number" inputmode="numeric" id="anim-start-x" value="0"></label>
+                <label><span>Y</span><input type="number" inputmode="numeric" id="anim-start-y" value="0"></label>
+                <label><span>Color</span><input type="color" id="anim-start-color" value="#ffffff"></label>
+              </div>
+              <div class="row btn-row">
+                <button id="btn-anim-set-start" class="btn outline">Capture</button>
+                <button id="btn-anim-apply-start" class="btn outline">Apply</button>
+              </div>
+            </div>
+
+            <div class="anim-block">
+              <div class="anim-title">End</div>
+              <div class="row">
+                <label><span>X</span><input type="number" inputmode="numeric" id="anim-end-x" value="100"></label>
+                <label><span>Y</span><input type="number" inputmode="numeric" id="anim-end-y" value="0"></label>
+                <label><span>Color</span><input type="color" id="anim-end-color" value="#ffffff"></label>
+              </div>
+              <div class="row btn-row">
+                <button id="btn-anim-set-end" class="btn outline">Capture</button>
+                <button id="btn-anim-apply-end" class="btn outline">Apply</button>
+              </div>
+            </div>
+
+            <div class="row">
+              <label class="grow">
+                <span>Mode</span>
+                <select id="anim-mode">
+                  <option value="duration">Frames (durée)</option>
+                  <option value="speed">px/frame</option>
+                </select>
+              </label>
+              <label><span>Value</span><input type="number" inputmode="numeric" id="anim-value" value="20" min="1"></label>
+            </div>
+            <div class="row">
+              <label class="grow">
+                <span>Easing</span>
+                <select id="anim-easing">
+                  <option value="linear" selected>Linear</option>
+                  <option value="ease-in">Ease-in</option>
+                  <option value="ease-out">Ease-out</option>
+                  <option value="ease-in-out">Ease-in-out</option>
+                  <option value="bounce">Bounce</option>
+                </select>
+              </label>
+            </div>
+            <button id="btn-generate-anim" class="btn primary">Générer l'animation</button>
+
+            <div class="section-title">Presets</div>
+            <div class="preset-grid">
+              <button id="btn-preset-scroll-left" class="btn outline">↞ Scroll</button>
+              <button id="btn-preset-scroll-right" class="btn outline">Scroll ↠</button>
+              <button id="btn-preset-blink" class="btn outline">Blink</button>
+              <button id="btn-preset-fadein" class="btn outline">Fade In</button>
+              <button id="btn-preset-fadeout" class="btn outline">Fade Out</button>
             </div>
           </div>
-          <div class="timeline-frames" id="timeline-container"></div>
-        </section>
-      </main>
+
+          <!-- PANE: Export & BLE -->
+          <div class="tab-pane" data-pane="export" role="tabpanel" hidden>
+            <div class="row">
+              <label class="grow">
+                <span>Nom</span>
+                <input type="text" id="export-filename" value="video" placeholder="video" />
+              </label>
+              <span class="ext-hint">.bin</span>
+            </div>
+            <div class="row">
+              <label class="grow">
+                <span>Mapping</span>
+                <select id="export-mapping">
+                  <option value="linear">Classique (ligne par ligne)</option>
+                  <option value="custom" selected>Grille 24 panneaux (12×2)</option>
+                </select>
+              </label>
+            </div>
+            <button id="btn-export-video" class="btn export-btn">⬇ Exporter en .bin</button>
+            <button id="btn-export-gif" class="btn outline">🎞 Exporter en .gif</button>
+
+            <div class="section-title">Bluetooth</div>
+            <div class="row ble-status-row">
+              <span class="ble-dot" data-state="disconnected" id="ble-status-badge-mirror" aria-hidden="true"></span>
+              <span id="ble-status-text" class="ble-status">Not connected</span>
+              <span class="spacer"></span>
+              <button id="btn-connect-ble" class="btn outline">Connect</button>
+            </div>
+            <button id="btn-stream-ble" class="btn stream-btn" hidden>📶 Streamer via BLE</button>
+            <button id="btn-ble-test-pattern" class="btn outline" title="Envoie un damier" disabled>🧪 Test pattern BLE</button>
+
+            <div id="export-progress-container" class="progress" hidden>
+              <div class="progress-info">
+                <span id="export-status-text">Extraction des frames…</span>
+                <span id="export-progress-text">0%</span>
+              </div>
+              <div class="progress-track">
+                <div id="export-progress-bar" class="progress-fill"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- PANE: Projet -->
+          <div class="tab-pane" data-pane="project" role="tabpanel" hidden>
+            <div class="row btn-row">
+              <button id="btn-new-project" class="btn outline">🆕 Nouveau</button>
+              <button id="btn-save-project" class="btn outline">💾 Save</button>
+              <button id="btn-load-project" class="btn outline">📂 Load</button>
+            </div>
+            <input type="file" id="file-load-project" accept=".json,application/json" hidden />
+            <p class="hint">Le projet contient les frames, les images et la palette de couleurs récentes. Autosave activée toutes les ~1.5 s.</p>
+
+            <!-- Bouton legacy conservé pour compatibilité main.js (caché) -->
+            <button id="btn-toggle-pencil" class="btn outline" hidden>Pencil legacy</button>
+          </div>
+
+        </div>
+      </section>
     </div>
 
     <!-- Custom Modal Dialog -->

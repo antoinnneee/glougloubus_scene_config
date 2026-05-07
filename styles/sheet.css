@@ -1,0 +1,196 @@
+/* ============== BOTTOM SHEET ============== */
+.sheet {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  background: rgba(15, 23, 42, 0.96);
+  border-top: 1px solid rgba(255,255,255,0.1);
+  border-radius: var(--radius) var(--radius) 0 0;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  display: flex;
+  flex-direction: column;
+  padding-bottom: var(--safe-bottom);
+  z-index: 30;
+  max-height: calc(var(--sheet-handle-h) + var(--safe-bottom));
+  overflow: hidden;
+  transition: max-height 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+  box-shadow: 0 -4px 20px rgba(0,0,0,0.25);
+}
+.sheet[data-state="open"] {
+  max-height: 78dvh;
+  box-shadow: 0 -10px 40px rgba(0,0,0,0.45);
+}
+
+.sheet-handle {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.35rem 0.5rem 0.4rem;
+  flex: 0 0 auto;
+  cursor: grab;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: none;
+}
+.sheet-handle:active { cursor: grabbing; }
+.grip {
+  width: 40px; height: 4px;
+  border-radius: 2px;
+  background: rgba(255,255,255,0.25);
+  margin: 0 auto;
+}
+.sheet-tabs {
+  display: flex;
+  gap: 0.25rem;
+  overflow-x: auto;
+  padding: 0.2rem 0.1rem;
+  -webkit-overflow-scrolling: touch;
+  /* Avoid the handle drag swallowing tab clicks */
+  touch-action: pan-x;
+}
+.sheet-tabs::-webkit-scrollbar { display: none; }
+.tab {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 999px;
+  padding: 0.42rem 0.85rem;
+  font-size: 0.8rem;
+  font-family: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  touch-action: manipulation;
+  white-space: nowrap;
+  flex: 0 0 auto;
+  -webkit-user-select: none;
+  user-select: none;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.tab.active {
+  background: var(--accent-color);
+  color: white;
+  border-color: var(--accent-hover);
+}
+
+.sheet-body {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 0.6rem 0.85rem 1.1rem;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.tab-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+/* ============== SHEET CONTENT BUILDING BLOCKS ============== */
+.section-title {
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent-hover);
+  margin-top: 0.3rem;
+}
+
+.row {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.row.btn-row { flex-wrap: nowrap; }
+.row.btn-row > .btn { flex: 1; }
+.row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+.row label > span { white-space: nowrap; }
+.row label.grow,
+.row .grow { flex: 1 1 140px; min-width: 0; }
+.row label.grow > select,
+.row label.grow > input { flex: 1; min-width: 0; }
+.row input[type="number"] { width: 64px; }
+
+.aux-row {
+  background: rgba(0,0,0,0.2);
+  border-radius: 8px;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid rgba(255,255,255,0.05);
+}
+.aux-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  min-height: 36px;
+}
+.aux-toggle input[type="checkbox"] { width: 22px; height: 22px; accent-color: var(--accent-color); }
+.aux-toggle select { min-height: 32px; padding: 0.25rem 1.6rem 0.25rem 0.5rem; }
+
+.selection-tools {
+  background: rgba(59,130,246,0.08);
+  border: 1px solid rgba(59,130,246,0.25);
+  border-radius: 8px;
+  padding: 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.anim-block {
+  background: rgba(0,0,0,0.25);
+  border-radius: 8px;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid rgba(255,255,255,0.05);
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.anim-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-main);
+}
+
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 0.4rem;
+}
+
+.hint {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.ext-hint {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  align-self: center;
+}
+
+.ble-status-row {
+  background: rgba(0,0,0,0.2);
+  border-radius: 8px;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid rgba(255,255,255,0.05);
+  flex-wrap: nowrap;
+}
+.ble-status-row .spacer { flex: 1; }
+.ble-status {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+#text-input { width: 100%; }

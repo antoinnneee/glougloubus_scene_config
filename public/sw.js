@@ -1,8 +1,7 @@
-const CACHE = 'glougloubus-v1';
+const CACHE = 'glougloubus-v2';
 const APP_SHELL = [
   './',
   './index.html',
-  './style.css',
   './main.js',
   './favicon.svg',
   './manifest.webmanifest'

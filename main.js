@@ -1,5 +1,13 @@
-const WIDTH = 192;
-const HEIGHT = 32;
+import './style.css';
+import { WIDTH, HEIGHT, mapToLedIndex, hslToRgb } from './modules/led-mapping.js';
+import { applyEasing } from './modules/easing.js';
+import {
+  processImage,
+  buildPaletteMedianCut,
+  nearestPaletteIdx
+} from './modules/image-process.js';
+import { GifEncoder } from './modules/gif-encoder.js';
+import { initBottomSheet, sheetAutoOpen } from './modules/sheet.js';
 
 // --- DOM Elements ---
 const canvas = document.getElementById('led-canvas');
@@ -876,6 +884,10 @@ function updateSelectionUI() {
   const has = !!selectedItemId;
   selectionTools.hidden = !has;
   if (btnDeleteSelected) btnDeleteSelected.disabled = !has;
+  if (has) {
+    const item = frames[currentFrameIndex] && frames[currentFrameIndex].find(i => i.id === selectedItemId);
+    if (item) sheetAutoOpen(item);
+  }
 }
 
 function deleteSelectedItem() {
@@ -1465,35 +1477,6 @@ const exportProgressBar = document.getElementById('export-progress-bar');
 const exportProgressText = document.getElementById('export-progress-text');
 const exportStatusText = document.getElementById('export-status-text');
 
-// Ported from convertisseur_video.html — maps logical (col,row) to physical LED index
-function mapToLedIndex(col, row) {
-  const NUMBER_OF_PANEL_WIDTH = 12;
-  const NUMBER_OF_PANEL_HEIGHT = 2;
-  const LED_PER_ROW = 16;
-  const LED_PER_COL = 16;
-  const LED_PER_PANEL = 256;
-
-  if (col < 0 || row < 0) return -1;
-  if (col > (NUMBER_OF_PANEL_WIDTH * LED_PER_ROW) - 1 ||
-      row > (NUMBER_OF_PANEL_HEIGHT * LED_PER_COL) - 1) return -1;
-
-  const panel_col = Math.floor(col / LED_PER_ROW);
-  const panel_row = (NUMBER_OF_PANEL_HEIGHT - 1) - Math.floor(row / LED_PER_COL);
-  const panel_index = panel_row * NUMBER_OF_PANEL_WIDTH + (NUMBER_OF_PANEL_WIDTH - 1 - panel_col);
-
-  const local_col = col % LED_PER_ROW;
-  const local_row = (LED_PER_COL - 1) - (row % LED_PER_COL);
-
-  let local_led_index;
-  if (local_row % 2 === 0) {
-    local_led_index = local_row * LED_PER_ROW + (LED_PER_ROW - 1 - local_col);
-  } else {
-    local_led_index = local_row * LED_PER_ROW + local_col;
-  }
-
-  return panel_index * LED_PER_PANEL + local_led_index;
-}
-
 async function exportToBin() {
   if (frames.length === 0) {
     showModal("Notice", "Aucune frame à exporter.", false);
@@ -1616,6 +1599,9 @@ function setBleStatus(state, label) {
   if (bleStatusBadge) {
     bleStatusBadge.dataset.state = state; // 'disconnected' | 'connecting' | 'connected' | 'error'
   }
+  // Mirror in the export pane
+  const mirror = document.getElementById('ble-status-badge-mirror');
+  if (mirror) mirror.dataset.state = state;
 }
 
 function onBleDisconnected() {
@@ -1731,24 +1717,6 @@ async function streamToBle() {
 // =========================================================================
 // === EXTRAS : easing, presets, palette, save/load, dithering, zoom, GIF ===
 // =========================================================================
-
-// ---- Easing ----
-function applyEasing(t, name) {
-  switch (name) {
-    case 'ease-in':     return t * t;
-    case 'ease-out':    return 1 - (1 - t) * (1 - t);
-    case 'ease-in-out': return t < 0.5 ? 2*t*t : 1 - Math.pow(-2*t + 2, 2) / 2;
-    case 'bounce':      return bounceOut(t);
-    default:            return t; // linear
-  }
-}
-function bounceOut(t) {
-  const n1 = 7.5625, d1 = 2.75;
-  if (t < 1/d1) return n1 * t * t;
-  if (t < 2/d1) { t -= 1.5/d1;  return n1 * t * t + 0.75; }
-  if (t < 2.5/d1) { t -= 2.25/d1; return n1 * t * t + 0.9375; }
-  t -= 2.625/d1; return n1 * t * t + 0.984375;
-}
 
 // ---- Animation presets ----
 function presetScroll(direction) {
@@ -2013,129 +1981,6 @@ function initZoomPan() {
   if (btnZoomReset) btnZoomReset.addEventListener('click', resetZoom);
 }
 
-// ---- Dithering / palette quantization ----
-function processImage(srcImg, ditherMode, paletteSize) {
-  // Dessine l'image sur un canvas à sa taille native pour manipuler les pixels
-  const c = document.createElement('canvas');
-  c.width = srcImg.width; c.height = srcImg.height;
-  const cc = c.getContext('2d');
-  cc.drawImage(srcImg, 0, 0);
-  const imgData = cc.getImageData(0, 0, c.width, c.height);
-  const d = imgData.data;
-
-  // Palette
-  let palette = null;
-  if (paletteSize > 0) palette = buildPaletteMedianCut(d, paletteSize);
-
-  if (ditherMode === 'floyd-steinberg') {
-    floydSteinberg(d, c.width, c.height, palette);
-  } else if (palette) {
-    quantizeWithPalette(d, palette);
-  }
-
-  cc.putImageData(imgData, 0, 0);
-  const dataUrl = c.toDataURL('image/png');
-  return new Promise((resolve) => {
-    const out = new Image();
-    out.onload = () => resolve({ image: out, dataUrl });
-    out.src = dataUrl;
-  });
-}
-
-function nearestColor(r, g, b, palette) {
-  let best = palette[0], bd = Infinity;
-  for (let i = 0; i < palette.length; i++) {
-    const p = palette[i];
-    const dr = r - p[0], dg = g - p[1], db = b - p[2];
-    const dist = dr*dr + dg*dg + db*db;
-    if (dist < bd) { bd = dist; best = p; }
-  }
-  return best;
-}
-
-function floydSteinberg(data, w, h, palette) {
-  // Copy into float buffer (per channel)
-  const buf = new Float32Array(data.length);
-  for (let i = 0; i < data.length; i++) buf[i] = data[i];
-
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = (y * w + x) * 4;
-      let or = buf[i], og = buf[i+1], ob = buf[i+2];
-      let nr, ng, nb;
-      if (palette) {
-        const n = nearestColor(or, og, ob, palette);
-        nr = n[0]; ng = n[1]; nb = n[2];
-      } else {
-        // 3-3-2 bit quantize (no palette)
-        nr = (Math.round(or / 32) * 32) & 0xFF;
-        ng = (Math.round(og / 32) * 32) & 0xFF;
-        nb = (Math.round(ob / 64) * 64) & 0xFF;
-      }
-      buf[i] = nr; buf[i+1] = ng; buf[i+2] = nb;
-      const er = or - nr, eg = og - ng, eb = ob - nb;
-      const diffuse = (dx, dy, f) => {
-        const xx = x + dx, yy = y + dy;
-        if (xx < 0 || xx >= w || yy >= h) return;
-        const k = (yy * w + xx) * 4;
-        buf[k]   += er * f;
-        buf[k+1] += eg * f;
-        buf[k+2] += eb * f;
-      };
-      diffuse(1, 0, 7/16);
-      diffuse(-1, 1, 3/16);
-      diffuse(0, 1, 5/16);
-      diffuse(1, 1, 1/16);
-    }
-  }
-  for (let i = 0; i < data.length; i += 4) {
-    data[i]   = Math.max(0, Math.min(255, buf[i]));
-    data[i+1] = Math.max(0, Math.min(255, buf[i+1]));
-    data[i+2] = Math.max(0, Math.min(255, buf[i+2]));
-  }
-}
-
-function quantizeWithPalette(data, palette) {
-  for (let i = 0; i < data.length; i += 4) {
-    const n = nearestColor(data[i], data[i+1], data[i+2], palette);
-    data[i] = n[0]; data[i+1] = n[1]; data[i+2] = n[2];
-  }
-}
-
-function buildPaletteMedianCut(data, k) {
-  // Collecte pixels non-transparents
-  const pixels = [];
-  for (let i = 0; i < data.length; i += 4) {
-    if (data[i+3] > 0) pixels.push([data[i], data[i+1], data[i+2]]);
-  }
-  const boxes = [pixels];
-  while (boxes.length < k) {
-    // Subdivise la plus grosse boîte sur son plus grand axe
-    boxes.sort((a, b) => b.length - a.length);
-    const box = boxes.shift();
-    if (!box || box.length < 2) { boxes.push(box); break; }
-    let min = [255,255,255], max = [0,0,0];
-    for (const p of box) {
-      for (let c = 0; c < 3; c++) {
-        if (p[c] < min[c]) min[c] = p[c];
-        if (p[c] > max[c]) max[c] = p[c];
-      }
-    }
-    const ranges = [max[0]-min[0], max[1]-min[1], max[2]-min[2]];
-    const axis = ranges.indexOf(Math.max(...ranges));
-    box.sort((a, b) => a[axis] - b[axis]);
-    const mid = box.length >> 1;
-    boxes.push(box.slice(0, mid));
-    boxes.push(box.slice(mid));
-  }
-  return boxes.filter(b => b.length).map(box => {
-    let r=0, g=0, b=0;
-    for (const p of box) { r+=p[0]; g+=p[1]; b+=p[2]; }
-    const n = box.length;
-    return [Math.round(r/n), Math.round(g/n), Math.round(b/n)];
-  });
-}
-
 // ---- BLE test pattern ----
 async function sendBleTestPattern() {
   if (!isBleConnected) { showModal('Notice', 'Non connecté.', false); return; }
@@ -2166,23 +2011,7 @@ async function sendBleTestPattern() {
     showModal('Erreur BLE', err.message, false);
   }
 }
-function hslToRgb(h, s, l) {
-  s /= 100; l /= 100;
-  const c = (1 - Math.abs(2*l - 1)) * s;
-  const hp = h / 60;
-  const x = c * (1 - Math.abs(hp % 2 - 1));
-  let r=0, g=0, b=0;
-  if (hp < 1) [r,g,b] = [c,x,0];
-  else if (hp < 2) [r,g,b] = [x,c,0];
-  else if (hp < 3) [r,g,b] = [0,c,x];
-  else if (hp < 4) [r,g,b] = [0,x,c];
-  else if (hp < 5) [r,g,b] = [x,0,c];
-  else [r,g,b] = [c,0,x];
-  const m = l - c/2;
-  return [Math.round((r+m)*255), Math.round((g+m)*255), Math.round((b+m)*255)];
-}
-
-// ---- Export GIF (encoder minimaliste, pas de dep externe) ----
+// ---- Export GIF ----
 async function exportGif() {
   if (frames.length === 0) { showModal('Notice', 'Aucune frame.', false); return; }
   if (btnExportGif) btnExportGif.disabled = true;
@@ -2229,124 +2058,6 @@ async function exportGif() {
   if (exportProgressBar) exportProgressBar.style.width = '100%';
   if (btnExportGif) btnExportGif.disabled = false;
 }
-function nearestPaletteIdx(r, g, b, palette) {
-  let bi = 0, bd = Infinity;
-  for (let i = 0; i < palette.length; i++) {
-    const p = palette[i];
-    const dr = r-p[0], dg = g-p[1], db = b-p[2];
-    const d = dr*dr + dg*dg + db*db;
-    if (d < bd) { bd = d; bi = i; }
-  }
-  return bi;
-}
-
-// Encodeur GIF89a minimaliste avec LZW
-class GifEncoder {
-  constructor(w, h, paletteFlat, paletteCount, delayCs) {
-    this.w = w; this.h = h;
-    this.paletteCount = paletteCount;
-    this.delayCs = delayCs;
-    // Table de couleurs : taille = 2^ceil(log2(count)), max 256
-    let tableSize = 2;
-    let tableExp = 1;
-    while (tableSize < paletteCount) { tableSize *= 2; tableExp++; }
-    this.tableExp = tableExp - 1; // format GIF : valeur-1 dans le header
-    this.tableSize = tableSize;
-    this.paddedPalette = new Uint8Array(tableSize * 3);
-    this.paddedPalette.set(paletteFlat.subarray(0, paletteCount * 3));
-    this.bytes = [];
-    this._writeHeader();
-  }
-  _writeHeader() {
-    this._writeStr('GIF89a');
-    // Logical screen descriptor
-    this._writeU16(this.w); this._writeU16(this.h);
-    this._writeByte(0b10000000 | this.tableExp); // GCT flag + size
-    this._writeByte(0); // bg index
-    this._writeByte(0); // px aspect
-    // Global color table
-    for (let i = 0; i < this.paddedPalette.length; i++) this._writeByte(this.paddedPalette[i]);
-    // NETSCAPE loop extension
-    this._writeByte(0x21); this._writeByte(0xFF); this._writeByte(11);
-    this._writeStr('NETSCAPE2.0');
-    this._writeByte(3); this._writeByte(1);
-    this._writeU16(0); // 0 = infinite
-    this._writeByte(0);
-  }
-  addFrame(indices) {
-    // Graphics Control Extension
-    this._writeByte(0x21); this._writeByte(0xF9); this._writeByte(4);
-    this._writeByte(0); // flags
-    this._writeU16(this.delayCs);
-    this._writeByte(0); // transparent index
-    this._writeByte(0); // terminator
-    // Image descriptor
-    this._writeByte(0x2C);
-    this._writeU16(0); this._writeU16(0);
-    this._writeU16(this.w); this._writeU16(this.h);
-    this._writeByte(0); // no local table, no interlace
-    // LZW
-    const minCodeSize = Math.max(2, this.tableExp + 1);
-    this._writeByte(minCodeSize);
-    const lzw = lzwEncode(indices, minCodeSize);
-    // Sub-blocks
-    for (let off = 0; off < lzw.length; off += 255) {
-      const len = Math.min(255, lzw.length - off);
-      this._writeByte(len);
-      for (let i = 0; i < len; i++) this._writeByte(lzw[off + i]);
-    }
-    this._writeByte(0); // block terminator
-  }
-  finish() {
-    this._writeByte(0x3B); // trailer
-    return new Blob([new Uint8Array(this.bytes)], { type: 'image/gif' });
-  }
-  _writeByte(b) { this.bytes.push(b & 0xFF); }
-  _writeU16(n) { this._writeByte(n); this._writeByte(n >> 8); }
-  _writeStr(s) { for (let i = 0; i < s.length; i++) this._writeByte(s.charCodeAt(i)); }
-}
-
-// LZW de base pour GIF (retourne Uint8Array)
-function lzwEncode(pixels, minCodeSize) {
-  const CLEAR = 1 << minCodeSize;
-  const END = CLEAR + 1;
-  let nextCode = END + 1;
-  let codeSize = minCodeSize + 1;
-  const dict = new Map();
-  const out = [];
-  let buf = 0, bufBits = 0;
-  const emit = (code) => {
-    buf |= code << bufBits;
-    bufBits += codeSize;
-    while (bufBits >= 8) { out.push(buf & 0xFF); buf >>= 8; bufBits -= 8; }
-  };
-  emit(CLEAR);
-  let prefix = pixels[0];
-  for (let i = 1; i < pixels.length; i++) {
-    const k = pixels[i];
-    const key = prefix * 4096 + k; // fits since palette<=256, nextCode<=4095
-    if (dict.has(key)) {
-      prefix = dict.get(key);
-    } else {
-      emit(prefix);
-      if (nextCode < 4096) {
-        dict.set(key, nextCode++);
-        if (nextCode > (1 << codeSize) && codeSize < 12) codeSize++;
-      } else {
-        emit(CLEAR);
-        dict.clear();
-        nextCode = END + 1;
-        codeSize = minCodeSize + 1;
-      }
-      prefix = k;
-    }
-  }
-  emit(prefix);
-  emit(END);
-  if (bufBits > 0) out.push(buf & 0xFF);
-  return Uint8Array.from(out);
-}
-
 // ---- Keyboard shortcuts ----
 function initShortcuts() {
   window.addEventListener('keydown', (e) => {
@@ -2439,6 +2150,17 @@ function nudgeSelected(dx, dy) {
 // ---- PWA ----
 function registerPwa() {
   if (!('serviceWorker' in navigator)) return;
+  // En dev, le SW casse les hot-updates Vite (cache-first sur same-origin).
+  // Désinscrire tout SW existant + skip register.
+  if (import.meta.env.DEV) {
+    navigator.serviceWorker.getRegistrations()
+      .then(regs => regs.forEach(r => r.unregister()))
+      .catch(() => {});
+    if (window.caches) {
+      caches.keys().then(keys => keys.forEach(k => caches.delete(k))).catch(() => {});
+    }
+    return;
+  }
   const base = import.meta.env.BASE_URL || '/';
   navigator.serviceWorker.register(base + 'sw.js').catch(err => console.warn('SW register failed:', err));
 }
@@ -2504,7 +2226,12 @@ function initExtras() {
   // Keyboard shortcuts
   initShortcuts();
 
+  // Bottom sheet (mobile UI)
+  initBottomSheet();
+
   // Autosave restore + register PWA
   tryRestoreAutosave();
   registerPwa();
 }
+
+// (initBottomSheet est dans modules/sheet.js — l'auto-open est appelé depuis updateSelectionUI)
