@@ -16,6 +16,7 @@ import {
   setKeyframe,
   removeKeyframe,
   setPropertyAtFrame,
+  setVisibleFrom,
   getValueAt,
   makeTextObject,
   makeImageObject,
@@ -109,7 +110,17 @@ const paletteContainer = document.getElementById('palette-container');
 // Snap / Onion / Fullscreen
 const snapSelect = document.getElementById('snap-select');
 const toggleOnion = document.getElementById('toggle-onion');
+const toggleSnapObjects = document.getElementById('toggle-snap-objects');
 const btnFullscreen = document.getElementById('btn-fullscreen');
+
+// Transforms (Phase 5)
+const propRotation = document.getElementById('prop-rotation');
+const btnRotReset = document.getElementById('btn-rot-reset');
+const btnFlipH = document.getElementById('btn-flip-h');
+const btnFlipV = document.getElementById('btn-flip-v');
+const btnDistH = document.getElementById('btn-dist-h');
+const btnDistV = document.getElementById('btn-dist-v');
+const alignButtons = document.querySelectorAll('[data-align]');
 const cursorCoords = document.getElementById('cursor-coords');
 const selectionInfo = document.getElementById('selection-info');
 const btnDeleteSelected = document.getElementById('btn-delete-selected');
@@ -260,6 +271,12 @@ let resizeStartScale = 1;
 let resizeStartSize = 16;
 let resizeItemStartX = 0;
 let resizeItemStartY = 0;
+
+// Rotation drag state (Phase 5)
+let isRotating = false;
+let rotateStartAngleScreen = 0;   // angle (rad) du pointer par rapport au centre de l'item au pointerdown
+let rotateStartItemAngle = 0;     // valeur degrés du track rotation au pointerdown
+let rotateCenter = null;          // {x, y} en coords logiques
 
 // Offscreen canvas for thumbnail generation and hit testing text measurement
 const offCanvas = document.createElement('canvas');
@@ -535,10 +552,28 @@ function handlePointerDown(e) {
     return;
   }
 
-  // Resize handles
+  // Rotation handle (cercle au-dessus du bbox)
+  if (selectedItemId && selectedIds.size === 1) {
+    const it = currentItems().find(i => i.sourceId === selectedItemId);
+    if (it) {
+      const rh = getRotationHandlePoints(it);
+      const hHit = getResizeHitRadius();
+      if (Math.hypot(x - rh.handle.x, y - rh.handle.y) <= hHit) {
+        pushUndo();
+        isRotating = true;
+        const c = getItemCenter(it);
+        rotateCenter = c;
+        rotateStartAngleScreen = Math.atan2(y - c.y, x - c.x);
+        rotateStartItemAngle = it.rotation || 0;
+        return;
+      }
+    }
+  }
+
+  // Resize handles : seulement si rotation = 0 (handles dessinés uniquement dans ce cas)
   if (selectedItemId) {
     const it = currentItems().find(i => i.sourceId === selectedItemId);
-    if (it && (it.type === 'text' || it.type === 'image')) {
+    if (it && !it.rotation && (it.type === 'text' || it.type === 'image')) {
       const bounds = getItemBounds(it);
       const hHit = getResizeHitRadius();
       const isHit = (hx, hy) => Math.abs(x - hx) <= hHit && Math.abs(y - hy) <= hHit;
@@ -573,6 +608,7 @@ function handlePointerDown(e) {
       color: pencilColor.value,
       f: currentFrameIndex
     });
+    setVisibleFrom(obj, currentFrameIndex);
     project.objects.push(obj);
     currentDrawingId = obj.id;
     renderCanvas();
@@ -638,8 +674,10 @@ function handlePointerDown(e) {
 // un drag groupé (tous bougent ensemble). On stocke (x,y) ou (x1,y1,x2,y2) selon
 // le type. Réinitialisé à chaque pointerdown.
 let groupDragStarts = new Map(); // id -> { x, y } ou { x1, y1, x2, y2 }
+let primaryStartBounds = null;   // { x, y, width, height } du primary au pointerdown (pour snap-objets)
 function captureGroupDragStart() {
   groupDragStarts.clear();
+  primaryStartBounds = null;
   for (const id of selectedIds) {
     const it = currentItems().find(i => i.sourceId === id);
     if (!it) continue;
@@ -648,6 +686,7 @@ function captureGroupDragStart() {
     } else {
       groupDragStarts.set(id, { x: it.x, y: it.y });
     }
+    if (id === selectedItemId) primaryStartBounds = getItemBounds(it);
   }
 }
 
@@ -704,6 +743,7 @@ function bucketFillAt(startX, startY, newColorHex) {
   }
   if (points.length === 0) return;
   const obj = makeDrawingObject({ points, color: newColorHex, f: currentFrameIndex });
+  setVisibleFrom(obj, currentFrameIndex);
   project.objects.push(obj);
   pushRecentColor(newColorHex);
 }
@@ -749,6 +789,25 @@ function handlePointerMove(e) {
     shapePreview.x2 = applySnap(x);
     shapePreview.y2 = applySnap(y);
     renderCanvas();
+    return;
+  }
+
+  // Drag du handle de rotation
+  if (isRotating && selectedItemId && rotateCenter) {
+    const obj = getObject(selectedItemId);
+    if (obj) {
+      const angleNow = Math.atan2(y - rotateCenter.y, x - rotateCenter.x);
+      let deg = rotateStartItemAngle + (angleNow - rotateStartAngleScreen) * 180 / Math.PI;
+      // Snap aux multiples de 15° si Shift
+      if (e.shiftKey) deg = Math.round(deg / 15) * 15;
+      // Normalise dans [-180, 180] pour rester lisible
+      deg = ((deg + 180) % 360 + 360) % 360 - 180;
+      updateObjectProp(obj, 'rotation', deg);
+      if (propRotation && document.activeElement !== propRotation) {
+        propRotation.value = (Math.round(deg * 10) / 10).toString();
+      }
+      renderCanvas();
+    }
     return;
   }
 
@@ -812,8 +871,22 @@ function handlePointerMove(e) {
 
   if (selectedIds.size === 0) return;
 
-  const dx = x - dragStartX;
-  const dy = y - dragStartY;
+  let dx = x - dragStartX;
+  let dy = y - dragStartY;
+
+  // Snap aux objets non-sélectionnés. Projeté = bbox au pointerdown + (dx, dy).
+  if (snapToObjectsEnabled && primaryStartBounds) {
+    const moved = {
+      x: primaryStartBounds.x + dx,
+      y: primaryStartBounds.y + dy,
+      width: primaryStartBounds.width,
+      height: primaryStartBounds.height,
+    };
+    const snap = computeObjectSnap(moved);
+    dx += snap.dx;
+    dy += snap.dy;
+  }
+
   const dxSnap = snapSize > 1 ? (applySnap(dx) - applySnap(0)) : dx;
   const dySnap = snapSize > 1 ? (applySnap(dy) - applySnap(0)) : dy;
 
@@ -897,6 +970,7 @@ function handlePointerUp(e) {
       color: shapePreview.color,
       f: currentFrameIndex
     });
+    setVisibleFrom(obj, currentFrameIndex);
     project.objects.push(obj);
     shapePreview = null;
     renderCanvas();
@@ -929,6 +1003,8 @@ function handlePointerUp(e) {
   isDragging = false;
   isResizing = false;
   resizeHandle = null;
+  isRotating = false;
+  rotateCenter = null;
   currentDrawingId = null;
   groupDragStarts.clear();
 
@@ -946,9 +1022,11 @@ function findItemAtCoord(cx, cy) {
     const item = items[i];
     const obj = getObject(item.sourceId);
     if (obj && obj.locked) continue;
+    // Inverse rotation/flip : on teste le clic dans le repère local de l'item
+    const local = inverseItemTransform(item, cx, cy);
     const bounds = getItemBounds(item);
-    if (cx >= bounds.x && cx <= bounds.x + bounds.width &&
-        cy >= bounds.y && cy <= bounds.y + bounds.height) {
+    if (local.x >= bounds.x && local.x <= bounds.x + bounds.width &&
+        local.y >= bounds.y && local.y <= bounds.y + bounds.height) {
       return item;
     }
   }
@@ -1040,7 +1118,13 @@ function updateSelectionUI() {
   if (btnDeleteSelected) btnDeleteSelected.disabled = !has;
   if (has) {
     const it = currentItems().find(i => i.sourceId === selectedItemId);
-    if (it) sheetAutoOpen(it);
+    if (it) {
+      sheetAutoOpen(it);
+      // Sync rotation input avec l'objet courant
+      if (propRotation && document.activeElement !== propRotation) {
+        propRotation.value = (Math.round((it.rotation || 0) * 10) / 10).toString();
+      }
+    }
   }
   updateKeyframeEditor();
   updateLayersPanel();
@@ -1271,6 +1355,21 @@ function drawItem(context, item) {
   if (opacity <= 0) return;
   context.save();
   if (opacity < 1) context.globalAlpha = opacity;
+
+  // Rotation + flip : transformations appliquées autour du centre du bbox
+  // unrotaté/unflippé. La rotation vient du track (degrés), flipX/flipY sont
+  // statiques.
+  const rot = item.rotation || 0;
+  const fx = item.flipX ? -1 : 1;
+  const fy = item.flipY ? -1 : 1;
+  if (rot !== 0 || fx !== 1 || fy !== 1) {
+    const c = getItemCenter(item);
+    context.translate(c.x, c.y);
+    if (rot) context.rotate(rot * Math.PI / 180);
+    if (fx !== 1 || fy !== 1) context.scale(fx, fy);
+    context.translate(-c.x, -c.y);
+  }
+
   if (item.type === 'text') {
     context.fillStyle = item.color;
     const font = item.font || '"JetBrains Mono", monospace';
@@ -1288,6 +1387,83 @@ function drawItem(context, item) {
     drawShape(context, item);
   }
   context.restore();
+}
+
+// Centre du bbox unrotaté d'un item (point pivot pour rotation/flip)
+function getItemCenter(item) {
+  const b = getItemBounds(item);
+  return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+}
+
+// Inverse-transforme un point (px, py) du repère "écran logique" vers le repère
+// local de l'item (annule rotation + flip autour du centre du bbox unrotaté).
+// Utilisé par hit-test pour cliquer sur un item rotaté/flippé.
+function inverseItemTransform(item, px, py) {
+  const rot = item.rotation || 0;
+  const fx = item.flipX ? -1 : 1;
+  const fy = item.flipY ? -1 : 1;
+  if (rot === 0 && fx === 1 && fy === 1) return { x: px, y: py };
+  const c = getItemCenter(item);
+  let x = px - c.x, y = py - c.y;
+  if (rot) {
+    const r = -rot * Math.PI / 180;
+    const cs = Math.cos(r), sn = Math.sin(r);
+    const xr = x * cs - y * sn;
+    const yr = x * sn + y * cs;
+    x = xr; y = yr;
+  }
+  if (fx !== 1) x = -x;
+  if (fy !== 1) y = -y;
+  return { x: x + c.x, y: y + c.y };
+}
+
+// Distance (en unités logiques) entre le bord supérieur du bbox et le handle
+// de rotation à l'écran. Convertie depuis ~26 CSS px.
+function getRotationHandleOffset() {
+  const rect = canvas.getBoundingClientRect();
+  return Math.max(2, 26 * (WIDTH / Math.max(1, rect.width)));
+}
+
+// Renvoie deux points en coords logiques :
+//   anchor — milieu de l'arête supérieure du bbox rotaté
+//   handle — position du cercle handle (anchor + offset le long de la normale "haut")
+function getRotationHandlePoints(item) {
+  const b = getItemBounds(item);
+  const c = getItemCenter(item);
+  const rot = (item.rotation || 0) * Math.PI / 180;
+  const cs = Math.cos(rot), sn = Math.sin(rot);
+  const off = getRotationHandleOffset();
+  // Milieu top du bbox unrotaté
+  const topMidLocal = { x: 0, y: -b.height / 2 };
+  // Direction "vers le haut" en world space après rotation
+  const ax = topMidLocal.x * cs - topMidLocal.y * sn;
+  const ay = topMidLocal.x * sn + topMidLocal.y * cs;
+  const anchor = { x: c.x + ax, y: c.y + ay };
+  // Direction normalisée vers l'extérieur (depuis center vers anchor) + offset
+  const len = Math.hypot(ax, ay) || 1;
+  const ux = ax / len, uy = ay / len;
+  const handle = { x: anchor.x + ux * off, y: anchor.y + uy * off };
+  return { anchor, handle };
+}
+
+// Renvoie les 4 coins du bbox APRÈS rotation+flip (pour dessiner le cadre de
+// sélection à l'écran). Ordre : tl, tr, br, bl.
+function getRotatedCorners(item) {
+  const b = getItemBounds(item);
+  const c = getItemCenter(item);
+  const rot = (item.rotation || 0) * Math.PI / 180;
+  const cs = Math.cos(rot), sn = Math.sin(rot);
+  // Le flip ne change pas la forme du bbox extérieur (pas la peine de l'appliquer)
+  const corners = [
+    { x: b.x,           y: b.y },
+    { x: b.x + b.width, y: b.y },
+    { x: b.x + b.width, y: b.y + b.height },
+    { x: b.x,           y: b.y + b.height },
+  ];
+  return corners.map(p => {
+    const dx = p.x - c.x, dy = p.y - c.y;
+    return { x: c.x + dx * cs - dy * sn, y: c.y + dx * sn + dy * cs };
+  });
 }
 
 function drawShape(context, item) {
@@ -1429,38 +1605,68 @@ function renderCanvas() {
   if (!isPlaying && selectedIds.size > 0) {
     const items = currentItems();
     const singleSelection = selectedIds.size === 1;
+    const cssWidth = canvas.getBoundingClientRect().width || canvas.width;
+    const bufferPerCss = canvas.width / cssWidth;
     for (const it of items) {
       if (!selectedIds.has(it.sourceId)) continue;
-      const bounds = getItemBounds(it);
-      const sx = bounds.x * scaleX;
-      const sy = bounds.y * scaleY;
-      const sw = bounds.width * scaleX;
-      const sh = bounds.height * scaleY;
-
-      // Box bleu pour primary, plus discret pour les autres
       const isPrimary = it.sourceId === selectedItemId;
+      const corners = getRotatedCorners(it).map(p => ({ x: p.x * scaleX, y: p.y * scaleY }));
+
+      // Cadre rotaté (4 coins)
       ctx.strokeStyle = isPrimary ? '#3b82f6' : '#60a5fa';
       ctx.lineWidth = isPrimary ? 2 : 1.5;
       ctx.setLineDash(isPrimary ? [6, 6] : [3, 4]);
-      ctx.strokeRect(sx, sy, sw, sh);
+      ctx.beginPath();
+      ctx.moveTo(corners[0].x, corners[0].y);
+      ctx.lineTo(corners[1].x, corners[1].y);
+      ctx.lineTo(corners[2].x, corners[2].y);
+      ctx.lineTo(corners[3].x, corners[3].y);
+      ctx.closePath();
+      ctx.stroke();
       ctx.setLineDash([]);
 
-      // Resize handles : uniquement si sélection unique (text/image)
-      if (singleSelection && (it.type === 'text' || it.type === 'image')) {
-        const cssWidth = canvas.getBoundingClientRect().width || canvas.width;
-        const bufferPerCss = canvas.width / cssWidth;
+      // Handles uniquement si sélection unique
+      if (singleSelection) {
         const hSize = 18 * bufferPerCss;
-        ctx.fillStyle = '#ffffff';
-        ctx.strokeStyle = '#000000';
-        ctx.lineWidth = Math.max(2, 2 * bufferPerCss);
         const drawHandle = (hx, hy) => {
+          ctx.fillStyle = '#ffffff';
+          ctx.strokeStyle = '#000000';
+          ctx.lineWidth = Math.max(2, 2 * bufferPerCss);
           ctx.fillRect(hx - hSize/2, hy - hSize/2, hSize, hSize);
           ctx.strokeRect(hx - hSize/2, hy - hSize/2, hSize, hSize);
         };
-        drawHandle(sx, sy);
-        drawHandle(sx + sw, sy);
-        drawHandle(sx, sy + sh);
-        drawHandle(sx + sw, sy + sh);
+
+        // Resize handles : seulement pour text/image et seulement si rotation = 0
+        // (resize sur item rotaté nécessiterait une logique de delta dans le repère
+        // local, hors scope ici).
+        const noRotation = !it.rotation;
+        if (noRotation && (it.type === 'text' || it.type === 'image')) {
+          drawHandle(corners[0].x, corners[0].y); // tl
+          drawHandle(corners[1].x, corners[1].y); // tr
+          drawHandle(corners[2].x, corners[2].y); // br
+          drawHandle(corners[3].x, corners[3].y); // bl
+        }
+
+        // Handle de rotation : cercle au-dessus du milieu de l'arête supérieure,
+        // à 22 CSS px de distance le long de la normale "haut" du bbox rotaté.
+        const rh = getRotationHandlePoints(it);
+        const anchorScreen = { x: rh.anchor.x * scaleX, y: rh.anchor.y * scaleY };
+        const handleScreen = { x: rh.handle.x * scaleX, y: rh.handle.y * scaleY };
+        ctx.strokeStyle = '#3b82f6';
+        ctx.lineWidth = Math.max(1.5, 1.5 * bufferPerCss);
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.moveTo(anchorScreen.x, anchorScreen.y);
+        ctx.lineTo(handleScreen.x, handleScreen.y);
+        ctx.stroke();
+        const rR = 9 * bufferPerCss;
+        ctx.fillStyle = '#3b82f6';
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = Math.max(2, 2 * bufferPerCss);
+        ctx.beginPath();
+        ctx.arc(handleScreen.x, handleScreen.y, rR, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
       }
     }
   }
@@ -1720,6 +1926,7 @@ function loadImageWithOptions(dataUrl, x, y, scale) {
 
     pushUndo();
     const obj = makeImageObject({ imgId, x, y, scale: finalScale, f: currentFrameIndex });
+    setVisibleFrom(obj, currentFrameIndex);
     project.objects.push(obj);
     setSingleSelection(obj.id);
     updateSelectionUI();
@@ -1742,6 +1949,7 @@ function applyTextTool() {
   pushRecentColor(color);
 
   const obj = makeTextObject({ text, font, x, y, size, color, f: currentFrameIndex });
+  setVisibleFrom(obj, currentFrameIndex);
   project.objects.push(obj);
   setSingleSelection(obj.id);
   updateSelectionUI();
@@ -2473,6 +2681,191 @@ function nudgeSelected(dx, dy) {
   updateSelectionUI();
 }
 
+// =========================================================================
+// === Phase 5 — Transforms avancés : flip, align, distribute, snap-objs ===
+// =========================================================================
+
+// Toggle flip H/V sur tous les sélectionnés (statique).
+function toggleFlip(axis /* 'x' | 'y' */) {
+  if (selectedIds.size === 0) return;
+  pushUndo();
+  for (const id of selectedIds) {
+    const obj = getObject(id);
+    if (!obj || obj.locked) continue;
+    if (obj.type === 'group') continue; // pas de flip sur les groupes pour l'instant
+    if (axis === 'x') obj.static.flipX = !obj.static.flipX;
+    else              obj.static.flipY = !obj.static.flipY;
+  }
+  renderCanvas();
+  updateTimelineThumb(currentFrameIndex);
+  updateLayersPanel();
+}
+
+// Translate un objet (x/y ou x1/x2/y1/y2 pour shape) à la frame courante en
+// décalant la valeur courante du delta donné. Utilise updateObjectProp pour
+// poser un keyframe si la track est animée, sinon écrit la propriété statique.
+function translateObject(obj, dx, dy) {
+  if (!obj || obj.locked) return;
+  if (obj.type === 'shape') {
+    const x1 = getValueAt(obj.tracks.x1, currentFrameIndex, 0);
+    const y1 = getValueAt(obj.tracks.y1, currentFrameIndex, 0);
+    const x2 = getValueAt(obj.tracks.x2, currentFrameIndex, 0);
+    const y2 = getValueAt(obj.tracks.y2, currentFrameIndex, 0);
+    updateObjectProp(obj, 'x1', Math.round(x1 + dx));
+    updateObjectProp(obj, 'y1', Math.round(y1 + dy));
+    updateObjectProp(obj, 'x2', Math.round(x2 + dx));
+    updateObjectProp(obj, 'y2', Math.round(y2 + dy));
+  } else if (obj.type === 'group') {
+    const x = getValueAt(obj.tracks.x, currentFrameIndex, 0);
+    const y = getValueAt(obj.tracks.y, currentFrameIndex, 0);
+    updateObjectProp(obj, 'x', Math.round(x + dx));
+    updateObjectProp(obj, 'y', Math.round(y + dy));
+  } else {
+    const x = getValueAt(obj.tracks.x, currentFrameIndex, 0);
+    const y = getValueAt(obj.tracks.y, currentFrameIndex, 0);
+    updateObjectProp(obj, 'x', Math.round(x + dx));
+    updateObjectProp(obj, 'y', Math.round(y + dy));
+  }
+}
+
+// Renvoie le bbox unrotaté (en coords logiques) d'un id sélectionné, ou null.
+function getSelectionBoundsById(id) {
+  const it = currentItems().find(i => i.sourceId === id);
+  if (!it) return null;
+  return getItemBounds(it);
+}
+
+// Bbox commun de tous les ids sélectionnés (union AABB).
+function getCommonBounds(ids) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const id of ids) {
+    const b = getSelectionBoundsById(id);
+    if (!b) continue;
+    minX = Math.min(minX, b.x);
+    minY = Math.min(minY, b.y);
+    maxX = Math.max(maxX, b.x + b.width);
+    maxY = Math.max(maxY, b.y + b.height);
+  }
+  if (!isFinite(minX)) return null;
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+// Aligne la sélection. Mode = 'left' | 'centerH' | 'right' | 'top' | 'centerV' | 'bottom'.
+// Référence : si ≥2 items sélectionnés → bbox commun ; si 1 → canvas (192×32).
+function alignSelection(mode) {
+  if (selectedIds.size === 0) return;
+  const ids = [...selectedIds].filter(id => {
+    const o = getObject(id);
+    return o && !o.locked && o.type !== 'group';
+  });
+  if (ids.length === 0) return;
+
+  let ref;
+  if (ids.length >= 2) {
+    ref = getCommonBounds(ids);
+  } else {
+    ref = { x: 0, y: 0, width: WIDTH, height: HEIGHT };
+  }
+  if (!ref) return;
+
+  pushUndo();
+  for (const id of ids) {
+    const obj = getObject(id);
+    const b = getSelectionBoundsById(id);
+    if (!obj || !b) continue;
+    let dx = 0, dy = 0;
+    switch (mode) {
+      case 'left':    dx = ref.x - b.x; break;
+      case 'centerH': dx = (ref.x + ref.width / 2) - (b.x + b.width / 2); break;
+      case 'right':   dx = (ref.x + ref.width) - (b.x + b.width); break;
+      case 'top':     dy = ref.y - b.y; break;
+      case 'centerV': dy = (ref.y + ref.height / 2) - (b.y + b.height / 2); break;
+      case 'bottom':  dy = (ref.y + ref.height) - (b.y + b.height); break;
+    }
+    if (dx || dy) translateObject(obj, dx, dy);
+  }
+  renderCanvas();
+  updateTimelineThumb(currentFrameIndex);
+  updateSelectionUI();
+}
+
+// Distribue uniformément les items sélectionnés sur l'axe donné.
+// Algorithme classique : trie par centre, garde les extrêmes en place,
+// répartit les centres des intermédiaires à intervalles égaux.
+function distributeSelection(axis /* 'h' | 'v' */) {
+  const ids = [...selectedIds].filter(id => {
+    const o = getObject(id);
+    return o && !o.locked && o.type !== 'group';
+  });
+  if (ids.length < 3) {
+    showModal('Notice', 'Sélectionne au moins 3 objets pour distribuer.', false);
+    return;
+  }
+  const entries = ids.map(id => {
+    const b = getSelectionBoundsById(id);
+    if (!b) return null;
+    const center = axis === 'h' ? (b.x + b.width / 2) : (b.y + b.height / 2);
+    return { id, center };
+  }).filter(Boolean);
+  entries.sort((a, b) => a.center - b.center);
+
+  const first = entries[0].center;
+  const last = entries[entries.length - 1].center;
+  const step = (last - first) / (entries.length - 1);
+
+  pushUndo();
+  for (let i = 1; i < entries.length - 1; i++) {
+    const target = first + step * i;
+    const obj = getObject(entries[i].id);
+    const delta = target - entries[i].center;
+    if (Math.abs(delta) < 0.5) continue;
+    if (axis === 'h') translateObject(obj, delta, 0);
+    else              translateObject(obj, 0, delta);
+  }
+  renderCanvas();
+  updateTimelineThumb(currentFrameIndex);
+  updateSelectionUI();
+}
+
+// ---- Snap aux objets pendant un drag ----
+// snapToObjects: bool ; tolérance ~2 px logiques.
+let snapToObjectsEnabled = false;
+const SNAP_OBJ_TOL = 2;
+
+// Renvoie {dx, dy} : ajustement à appliquer au delta de drag pour qu'au moins
+// un bord/centre du groupe sélectionné s'aligne avec un bord/centre d'un objet
+// non-sélectionné. Retourne { dx: 0, dy: 0 } si aucun snap.
+// movingBounds = bbox courant du primary après application du delta brut.
+function computeObjectSnap(movingBounds) {
+  if (!snapToObjectsEnabled || !movingBounds) return { dx: 0, dy: 0, hits: [] };
+  const items = currentItems();
+  const targetsX = []; // { v, type } — bords/centres verticaux des autres objets
+  const targetsY = [];
+  for (const it of items) {
+    if (selectedIds.has(it.sourceId)) continue;
+    const b = getItemBounds(it);
+    if (!b) continue;
+    targetsX.push(b.x, b.x + b.width / 2, b.x + b.width);
+    targetsY.push(b.y, b.y + b.height / 2, b.y + b.height);
+  }
+  if (targetsX.length === 0) return { dx: 0, dy: 0, hits: [] };
+
+  const candidatesX = [movingBounds.x, movingBounds.x + movingBounds.width / 2, movingBounds.x + movingBounds.width];
+  const candidatesY = [movingBounds.y, movingBounds.y + movingBounds.height / 2, movingBounds.y + movingBounds.height];
+
+  let bestDx = 0, bestDxAbs = SNAP_OBJ_TOL + 0.001;
+  let bestDy = 0, bestDyAbs = SNAP_OBJ_TOL + 0.001;
+  for (const c of candidatesX) for (const t of targetsX) {
+    const d = t - c;
+    if (Math.abs(d) < bestDxAbs) { bestDx = d; bestDxAbs = Math.abs(d); }
+  }
+  for (const c of candidatesY) for (const t of targetsY) {
+    const d = t - c;
+    if (Math.abs(d) < bestDyAbs) { bestDy = d; bestDyAbs = Math.abs(d); }
+  }
+  return { dx: bestDx, dy: bestDy };
+}
+
 // ---- Group / Ungroup (Phase 4) ----
 function groupSelection() {
   if (selectedIds.size < 2) {
@@ -2598,6 +2991,39 @@ function initExtras() {
   if (toggleOnion) {
     toggleOnion.addEventListener('change', () => { onionSkinEnabled = toggleOnion.checked; renderCanvas(); });
   }
+  if (toggleSnapObjects) {
+    toggleSnapObjects.addEventListener('change', () => { snapToObjectsEnabled = toggleSnapObjects.checked; });
+  }
+
+  // Transform controls (Phase 5)
+  if (propRotation) {
+    propRotation.addEventListener('focus', () => { if (selectedItemId) pushUndo(); });
+    propRotation.addEventListener('input', () => {
+      const obj = getObject(selectedItemId);
+      if (!obj) return;
+      const v = parseFloat(propRotation.value);
+      if (Number.isNaN(v)) return;
+      updateObjectProp(obj, 'rotation', v);
+      renderCanvas();
+      updateTimelineThumb(currentFrameIndex);
+    });
+  }
+  if (btnRotReset) btnRotReset.addEventListener('click', () => {
+    const obj = getObject(selectedItemId);
+    if (!obj) return;
+    pushUndo();
+    updateObjectProp(obj, 'rotation', 0);
+    if (propRotation) propRotation.value = '0';
+    renderCanvas();
+    updateTimelineThumb(currentFrameIndex);
+  });
+  if (btnFlipH) btnFlipH.addEventListener('click', () => toggleFlip('x'));
+  if (btnFlipV) btnFlipV.addEventListener('click', () => toggleFlip('y'));
+  if (alignButtons) alignButtons.forEach(b => {
+    b.addEventListener('click', () => alignSelection(b.dataset.align));
+  });
+  if (btnDistH) btnDistH.addEventListener('click', () => distributeSelection('h'));
+  if (btnDistV) btnDistV.addEventListener('click', () => distributeSelection('v'));
 
   // Fullscreen
   if (btnFullscreen) btnFullscreen.addEventListener('click', toggleFullscreen);

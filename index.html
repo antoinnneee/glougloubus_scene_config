@@ -144,12 +144,46 @@
                   <option value="16">16 px</option>
                 </select>
               </label>
+              <label class="aux-toggle">
+                <input type="checkbox" id="toggle-snap-objects" />
+                <span>Snap objets</span>
+              </label>
             </div>
+
+            <!-- Transforms (Phase 5) -->
+            <div class="section-title">Transformations</div>
+            <div class="transform-grid">
+              <div class="transform-group" aria-label="Rotation">
+                <label class="transform-input">
+                  <span>Rotation</span>
+                  <input type="number" id="prop-rotation" value="0" step="1" />
+                  <span class="ext-hint">°</span>
+                </label>
+                <button id="btn-rot-reset" class="iconbtn" title="Reset rotation">⟳ 0°</button>
+              </div>
+              <div class="transform-group" aria-label="Flip">
+                <button id="btn-flip-h" class="iconbtn" title="Flip horizontal" aria-label="Flip H">⇋</button>
+                <button id="btn-flip-v" class="iconbtn" title="Flip vertical" aria-label="Flip V">⇵</button>
+              </div>
+              <div class="transform-group transform-align" aria-label="Alignement">
+                <button data-align="left"    class="iconbtn" title="Aligner à gauche" aria-label="Align L">⇤</button>
+                <button data-align="centerH" class="iconbtn" title="Centrer horizontalement" aria-label="Align center H">⇔</button>
+                <button data-align="right"   class="iconbtn" title="Aligner à droite" aria-label="Align R">⇥</button>
+                <button data-align="top"     class="iconbtn" title="Aligner en haut" aria-label="Align top">⤒</button>
+                <button data-align="centerV" class="iconbtn" title="Centrer verticalement" aria-label="Align center V">⇕</button>
+                <button data-align="bottom"  class="iconbtn" title="Aligner en bas" aria-label="Align bottom">⤓</button>
+              </div>
+              <div class="transform-group" aria-label="Distribution">
+                <button id="btn-dist-h" class="iconbtn" title="Distribuer horizontalement (≥3)" aria-label="Distribute H">↔</button>
+                <button id="btn-dist-v" class="iconbtn" title="Distribuer verticalement (≥3)" aria-label="Distribute V">↕</button>
+              </div>
+            </div>
+
             <div id="selection-tools" class="selection-tools" hidden>
               <div class="section-title">Sélection active</div>
               <button id="btn-delete-item" class="btn danger">Supprimer l'item sélectionné</button>
             </div>
-            <p class="hint">Astuce&nbsp;: tape sur un item pour le sélectionner. Pince à 2 doigts pour zoomer la vue ou redimensionner l'item sélectionné.</p>
+            <p class="hint">Rotation : drag le cercle bleu au-dessus de l'item (Shift = pas de 15°). Alignement&nbsp;: 1 sélectionné = sur le canvas, ≥2 = sur le bbox commun.</p>
           </div>
 
           <!-- PANE: Texte -->

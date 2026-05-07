@@ -2,10 +2,10 @@
 // Interface stateless : rappeler renderKeyframeEditor() à chaque changement.
 
 const TRACKS_BY_TYPE = {
-  text:    ['x', 'y', 'size', 'color', 'opacity'],
-  image:   ['x', 'y', 'scale', 'opacity'],
-  drawing: ['x', 'y', 'opacity'],
-  shape:   ['x1', 'y1', 'x2', 'y2', 'color', 'opacity'],
+  text:    ['x', 'y', 'size', 'rotation', 'color', 'opacity'],
+  image:   ['x', 'y', 'scale', 'rotation', 'opacity'],
+  drawing: ['x', 'y', 'rotation', 'opacity'],
+  shape:   ['x1', 'y1', 'x2', 'y2', 'rotation', 'color', 'opacity'],
 };
 
 const EASINGS = ['linear', 'ease-in', 'ease-out', 'ease-in-out', 'bounce'];

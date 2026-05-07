@@ -56,11 +56,14 @@ export function createObject(type, opts = {}) {
 }
 
 function defaultStatic(type) {
+  // flipX/flipY sont des propriétés statiques (booleans) — appliquées au rendu
+  // via ctx.scale(-1, 1) / ctx.scale(1, -1) autour du centre du bbox. La
+  // rotation, en revanche, est animable et vit dans tracks.rotation (en degrés).
   switch (type) {
-    case 'text':    return { text: '', font: '"JetBrains Mono", monospace' };
-    case 'image':   return { imgId: null };
-    case 'drawing': return { points: [] };
-    case 'shape':   return { shape: 'rect' };
+    case 'text':    return { text: '', font: '"JetBrains Mono", monospace', flipX: false, flipY: false };
+    case 'image':   return { imgId: null, flipX: false, flipY: false };
+    case 'drawing': return { points: [], flipX: false, flipY: false };
+    case 'shape':   return { shape: 'rect', flipX: false, flipY: false };
     case 'group':   return {};
   }
   return {};
@@ -77,6 +80,15 @@ export function setKeyframe(obj, prop, f, v, easing = 'linear') {
     track.push(kf);
     track.sort((a, b) => a.f - b.f);
   }
+}
+
+// Restreint la visibilité d'un objet à [f, +∞) — utilisé quand on crée un objet
+// sur une frame > 0 pour qu'il ne s'affiche pas avant. La borne supérieure
+// `null` signifie "pas de borne max" (cf. isVisibleAt).
+export function setVisibleFrom(obj, f) {
+  if (!obj) return;
+  if (f > 0) obj.visibleRanges = [[f, null]];
+  else obj.visibleRanges = null;
 }
 
 export function removeKeyframe(obj, prop, f) {
@@ -128,7 +140,14 @@ function interpolateHex(a, b, t) {
 export function isVisibleAt(obj, f) {
   if (!obj.visible) return false;
   if (!obj.visibleRanges) return true;
-  return obj.visibleRanges.some(([s, e]) => f >= s && f <= e);
+  // s ou e à null/undefined = pas de borne. Permet de stocker [f, null] pour
+  // "visible à partir de f" sans dépendre de project.frameCount (Infinity ne
+  // survit pas à JSON.stringify, on utilise null comme sentinelle).
+  return obj.visibleRanges.some(([s, e]) => {
+    const start = s == null ? -Infinity : s;
+    const end   = e == null ?  Infinity : e;
+    return f >= start && f <= end;
+  });
 }
 
 // --- Materialize : object + frame f → item plat à rasteriser ---
@@ -141,6 +160,8 @@ function materialize(obj, f) {
     type: obj.type,
     opacity: getValueAt(obj.tracks.opacity, f, 1),
     rotation: getValueAt(obj.tracks.rotation, f, 0),
+    flipX: !!obj.static.flipX,
+    flipY: !!obj.static.flipY,
   };
   if (obj.type === 'text') {
     out.text = obj.static.text;
@@ -278,18 +299,15 @@ export function makeShapeObject({ shape, x1, y1, x2, y2, color, f = 0 }) {
 }
 
 // --- Mise à jour d'une propriété à la frame courante ---
-// Si la propriété est animée (tracks.prop a > 1 keyframe), on insère/MAJ un keyframe à f.
-// Si pas animée (0 ou 1 keyframe), on remplace la valeur du keyframe initial (à f=0)
-// pour ne pas accidentellement créer une animation.
+// Comportement : toute modification à f > 0 crée/maj un keyframe à f, ce qui
+// transforme automatiquement la modification en animation. À f === 0 (ou
+// track vide), on met simplement à jour la valeur de référence.
+// `getValueAt` clampe avant le premier kf et après le dernier, donc pas
+// besoin d'ajouter un kf de "padding" à 0 pour préserver la valeur d'avant.
 export function setPropertyAtFrame(obj, prop, f, v, easing = 'linear') {
   const track = obj.tracks[prop];
-  if (!track || track.length <= 1) {
-    // Pas animée : garde la propriété "statique" en MAJ le keyframe unique (ou en pose un à 0)
-    if (!track || track.length === 0) {
-      setKeyframe(obj, prop, 0, v, easing);
-    } else {
-      track[0].v = v;
-    }
+  if (!track || track.length === 0 || f === 0) {
+    setKeyframe(obj, prop, 0, v, easing);
     return;
   }
   setKeyframe(obj, prop, f, v, easing);

@@ -135,6 +135,34 @@
 .aux-toggle input[type="checkbox"] { width: 22px; height: 22px; accent-color: var(--accent-color); }
 .aux-toggle select { min-height: 32px; padding: 0.25rem 1.6rem 0.25rem 0.5rem; }
 
+/* Transform controls (Phase 5) */
+.transform-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.transform-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  padding: 0.45rem 0.55rem;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+.transform-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+.transform-input input[type="number"] { width: 72px; }
+.transform-align {
+  flex-wrap: wrap;
+}
+
 .selection-tools {
   background: rgba(59,130,246,0.08);
   border: 1px solid rgba(59,130,246,0.25);
