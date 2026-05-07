@@ -208,9 +208,16 @@
   position: relative;
   height: 26px;
   flex: 0 0 auto;
+  /* Mirror la structure d'une .gtl-track-row : spacer-label à gauche + ruler
+     prenant le reste. Garantit l'alignement pixel-pixel des ticks/playhead
+     avec les dots des lanes. */
+  display: flex;
+  align-items: stretch;
+  gap: 0.4rem;
 }
 .gtl-ruler {
   position: relative;
+  flex: 1;
   height: 100%;
   background: rgba(0, 0, 0, 0.25);
   border-radius: 6px;

@@ -33,9 +33,16 @@ export function renderGlobalTimeline(container, { project, currentFrame, selecte
 
   const frameCount = Math.max(1, project.frameCount);
 
-  // --- Règle (ruler) avec ticks et labels
+  // --- Règle (ruler) avec ticks et labels.
+  // Important : la règle doit s'aligner pixel-pixel avec les lanes en dessous,
+  // donc on reproduit la même structure (label spacer à gauche + zone à droite)
+  // pour que les positions en pourcentage matchent.
   const rulerWrap = document.createElement('div');
   rulerWrap.className = 'gtl-ruler-wrap';
+  const rulerSpacer = document.createElement('span');
+  rulerSpacer.className = 'gtl-track-label';
+  rulerSpacer.setAttribute('aria-hidden', 'true');
+  rulerWrap.appendChild(rulerSpacer);
   const ruler = document.createElement('div');
   ruler.className = 'gtl-ruler';
 
