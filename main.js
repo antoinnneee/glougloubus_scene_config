@@ -8,6 +8,18 @@ import {
 } from './modules/image-process.js';
 import { GifEncoder } from './modules/gif-encoder.js';
 import { initBottomSheet, sheetAutoOpen } from './modules/sheet.js';
+import {
+  SCENE_VERSION,
+  createEmptyProject,
+  evaluateScene,
+  setKeyframe,
+  setPropertyAtFrame,
+  getValueAt,
+  makeTextObject,
+  makeImageObject,
+  makeDrawingObject,
+  makeShapeObject,
+} from './modules/scene.js';
 
 // --- DOM Elements ---
 const canvas = document.getElementById('led-canvas');
@@ -118,29 +130,62 @@ const bleStatusBadge = document.getElementById('ble-status-badge');
 // Export GIF
 const btnExportGif = document.getElementById('btn-export-gif');
 
-// --- State ---
-// A frame is now an ARRAY of objects: { id, type, x, y, ...specificProps }
-let frames = [];
+// --- Constantes globales ---
+const AUTOSAVE_KEY = 'glougloubus-autosave-v3';
+const AUTOSAVE_TS_KEY = 'glougloubus-autosave-v3-ts';
+
+// --- State (Scene v3) ---
+// project.objects[] est la source de vérité. Chaque objet est global et porte
+// des keyframes par propriété. evaluateScene(project, f) retourne la liste
+// d'items à rasteriser pour la frame f. Plus de tableau frames[] qui se
+// dupliquait à chaque frame.
+let project = createEmptyProject({ width: WIDTH, height: HEIGHT, fps: 20, frameCount: 1 });
 let currentFrameIndex = 0;
 let isPlaying = false;
-let fps = 20;
 let playInterval = null;
 
 // Image cache — items stockent un imgId (string) au lieu d'un HTMLImageElement
-// pour pouvoir sérialiser frames en JSON (undo/redo, save/load, autosave).
+// pour pouvoir sérialiser project en JSON (undo/redo, save/load, autosave).
 const imageCache = new Map();       // imgId -> HTMLImageElement (pour draw)
-const imageDataUrls = new Map();    // imgId -> dataURL base64 (pour export/import)
+// imageDataUrls vit désormais dans project.imageDataUrls (sérialisé direct).
 
-// Undo / Redo
+// Undo / Redo (snapshots de project)
 const MAX_UNDO = 50;
 let undoStack = [];
 let redoStack = [];
 
-// Clipboard pour copy/paste d'item
+// Clipboard pour copy/paste d'objet (snapshot JSON)
 let clipboardItem = null;
 
-// Palette : 8 couleurs récentes (plus récente en premier)
-let recentColors = ['#ffffff', '#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff', '#ff8800'];
+// Helpers fps / recentColors : raccourcis sur project pour ne pas tout réécrire
+function getFps()          { return project.fps; }
+function setFps(v)         { project.fps = v; }
+function getRecentColors() { return project.recentColors; }
+
+// Items rasterisés pour la frame courante (cache court-terme dans renderCanvas /
+// getItemBounds). NB : ces items sont des SNAPSHOTS — modifier item.x ne change
+// rien dans project. Pour modifier, il faut passer par updateObjectAtFrame().
+function currentItems() { return evaluateScene(project, currentFrameIndex); }
+
+// Trouve l'objet source dans project.objects à partir d'un id (sourceId d'un item
+// matérialisé OU id direct d'un objet).
+function getObject(id) {
+  if (!id) return null;
+  return project.objects.find(o => o.id === id) || null;
+}
+
+// Met à jour une propriété d'un objet à la frame courante. Pour les propriétés
+// "statiques" (text, font, points, shape, imgId), MAJ obj.static. Pour les
+// propriétés animables, passe par setPropertyAtFrame.
+const STATIC_PROPS = new Set(['text', 'font', 'points', 'shape', 'imgId']);
+function updateObjectProp(obj, prop, value) {
+  if (!obj) return;
+  if (STATIC_PROPS.has(prop)) {
+    obj.static[prop] = value;
+  } else {
+    setPropertyAtFrame(obj, prop, currentFrameIndex, value);
+  }
+}
 
 // Snap & onion-skin
 let snapSize = 0;          // 0 = off, sinon 1, 8 ou 16
@@ -192,13 +237,13 @@ function generateId() {
   return Math.random().toString(36).substring(2, 9);
 }
 
-// Deep clone des frames — les items sont full JSON-safe (imgId au lieu d'HTMLImageElement)
-function snapshotFrames() {
-  return JSON.parse(JSON.stringify(frames));
+// Snapshot du projet entier (JSON-safe : pas d'HTMLImageElement)
+function snapshotProject() {
+  return JSON.parse(JSON.stringify(project));
 }
 
 function pushUndo() {
-  undoStack.push(snapshotFrames());
+  undoStack.push(snapshotProject());
   if (undoStack.length > MAX_UNDO) undoStack.shift();
   redoStack.length = 0;
   updateUndoButtons();
@@ -207,9 +252,10 @@ function pushUndo() {
 
 function undo() {
   if (undoStack.length === 0) return;
-  redoStack.push(snapshotFrames());
-  frames = undoStack.pop();
-  if (currentFrameIndex >= frames.length) currentFrameIndex = frames.length - 1;
+  redoStack.push(snapshotProject());
+  project = undoStack.pop();
+  if (currentFrameIndex >= project.frameCount) currentFrameIndex = project.frameCount - 1;
+  if (currentFrameIndex < 0) currentFrameIndex = 0;
   selectedItemId = null;
   updateUI();
   updateUndoButtons();
@@ -217,9 +263,10 @@ function undo() {
 
 function redo() {
   if (redoStack.length === 0) return;
-  undoStack.push(snapshotFrames());
-  frames = redoStack.pop();
-  if (currentFrameIndex >= frames.length) currentFrameIndex = frames.length - 1;
+  undoStack.push(snapshotProject());
+  project = redoStack.pop();
+  if (currentFrameIndex >= project.frameCount) currentFrameIndex = project.frameCount - 1;
+  if (currentFrameIndex < 0) currentFrameIndex = 0;
   selectedItemId = null;
   updateUI();
   updateUndoButtons();
@@ -233,10 +280,11 @@ function updateUndoButtons() {
 function pushRecentColor(color) {
   if (!color) return;
   color = color.toLowerCase();
-  const idx = recentColors.indexOf(color);
-  if (idx !== -1) recentColors.splice(idx, 1);
-  recentColors.unshift(color);
-  recentColors = recentColors.slice(0, 8);
+  const list = project.recentColors;
+  const idx = list.indexOf(color);
+  if (idx !== -1) list.splice(idx, 1);
+  list.unshift(color);
+  project.recentColors = list.slice(0, 8);
   renderPalette();
 }
 
@@ -272,8 +320,7 @@ function showModal(title, message, showCancel = false) {
 
 // --- Initialization ---
 function init() {
-  // Start with one blank frame
-  frames.push([]);
+  // Project déjà initialisé avec frameCount=1
   updateUI();
 
   // Event Listeners
@@ -283,7 +330,7 @@ function init() {
   btnClear.addEventListener('click', clearCurrentFrame);
 
   btnPlayPause.addEventListener('click', togglePlay);
-  inputFps.addEventListener('change', (e) => { fps = parseInt(e.target.value) || 20; if(isPlaying) { stop(); play(); } });
+  inputFps.addEventListener('change', (e) => { setFps(parseInt(e.target.value) || 20); if(isPlaying) { stop(); play(); } });
 
   // Update button texts
   btnApplyImage.innerText = "Add Image";
@@ -291,60 +338,54 @@ function init() {
   btnApplyImage.addEventListener('click', applyImageTool);
   btnApplyText.addEventListener('click', applyTextTool);
   btnGenerateAnim.addEventListener('click', generateAnimation);
-  
+
   btnConnectBle.addEventListener('click', connectBle);
   btnStreamBle.addEventListener('click', streamToBle);
-  
+
   btnAnimSetStart.addEventListener('click', () => {
-    if (selectedItemId) {
-      const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
-      if (item) {
-        animStartX.value = item.x;
-        animStartY.value = item.y;
-        if (item.color) animStartColor.value = item.color;
-      }
-    }
+    const obj = getObject(selectedItemId);
+    if (!obj) return;
+    const item = currentItems().find(i => i.sourceId === obj.id);
+    if (!item) return;
+    animStartX.value = Math.round(item.x);
+    animStartY.value = Math.round(item.y);
+    if (item.color) animStartColor.value = item.color;
   });
-  
+
   btnAnimSetEnd.addEventListener('click', () => {
-    if (selectedItemId) {
-      const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
-      if (item) {
-        animEndX.value = item.x;
-        animEndY.value = item.y;
-        if (item.color) animEndColor.value = item.color;
-      }
-    }
+    const obj = getObject(selectedItemId);
+    if (!obj) return;
+    const item = currentItems().find(i => i.sourceId === obj.id);
+    if (!item) return;
+    animEndX.value = Math.round(item.x);
+    animEndY.value = Math.round(item.y);
+    if (item.color) animEndColor.value = item.color;
   });
 
   btnAnimApplyStart.addEventListener('click', () => {
-    if (selectedItemId) {
-      const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
-      if (item) {
-        pushUndo();
-        item.x = parseInt(animStartX.value) || 0;
-        item.y = parseInt(animStartY.value) || 0;
-        item.color = animStartColor.value;
-        renderCanvas();
-        updateTimelineThumb(currentFrameIndex);
-        populatePropertiesPanel(item);
-      }
-    }
+    const obj = getObject(selectedItemId);
+    if (!obj) return;
+    pushUndo();
+    updateObjectProp(obj, 'x', parseInt(animStartX.value) || 0);
+    updateObjectProp(obj, 'y', parseInt(animStartY.value) || 0);
+    updateObjectProp(obj, 'color', animStartColor.value);
+    renderCanvas();
+    updateTimelineThumb(currentFrameIndex);
+    const it = currentItems().find(i => i.sourceId === obj.id);
+    if (it) populatePropertiesPanel(it);
   });
 
   btnAnimApplyEnd.addEventListener('click', () => {
-    if (selectedItemId) {
-      const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
-      if (item) {
-        pushUndo();
-        item.x = parseInt(animEndX.value) || 0;
-        item.y = parseInt(animEndY.value) || 0;
-        item.color = animEndColor.value;
-        renderCanvas();
-        updateTimelineThumb(currentFrameIndex);
-        populatePropertiesPanel(item);
-      }
-    }
+    const obj = getObject(selectedItemId);
+    if (!obj) return;
+    pushUndo();
+    updateObjectProp(obj, 'x', parseInt(animEndX.value) || 0);
+    updateObjectProp(obj, 'y', parseInt(animEndY.value) || 0);
+    updateObjectProp(obj, 'color', animEndColor.value);
+    renderCanvas();
+    updateTimelineThumb(currentFrameIndex);
+    const it = currentItems().find(i => i.sourceId === obj.id);
+    if (it) populatePropertiesPanel(it);
   });
   
   btnDeleteItem.addEventListener('click', deleteSelectedItem);
@@ -385,12 +426,27 @@ function init() {
 // --- Interaction Logic ---
 function getCanvasCoords(event) {
   const rect = canvas.getBoundingClientRect();
-  // Map CSS coordinates to logic (192x32) coordinates
-  const scaleX = WIDTH / rect.width;
-  const scaleY = HEIGHT / rect.height;
+  // Le canvas a object-fit: contain → son contenu (192×32, ratio 6:1) est
+  // letterboxé à l'intérieur de l'élément quand le ratio de l'élément n'est
+  // pas pile 6:1 (cas réel : .canvas-container a un padding/border qui rend
+  // sa content box plus large que 6:1, donc letterbox horizontal).
+  const elemAspect = rect.width / rect.height;
+  const canvasAspect = WIDTH / HEIGHT;
+  let dispW, dispH, offsetX, offsetY;
+  if (elemAspect > canvasAspect) {
+    dispH = rect.height;
+    dispW = dispH * canvasAspect;
+    offsetX = (rect.width - dispW) / 2;
+    offsetY = 0;
+  } else {
+    dispW = rect.width;
+    dispH = dispW / canvasAspect;
+    offsetX = 0;
+    offsetY = (rect.height - dispH) / 2;
+  }
   return {
-    x: (event.clientX - rect.left) * scaleX,
-    y: (event.clientY - rect.top) * scaleY
+    x: (event.clientX - rect.left - offsetX) * (WIDTH / dispW),
+    y: (event.clientY - rect.top - offsetY) * (HEIGHT / dispH)
   };
 }
 
@@ -402,7 +458,9 @@ function getResizeHitRadius() {
 }
 
 function applySnap(v) {
-  return snapSize > 1 ? Math.round(v / snapSize) * snapSize : Math.round(v);
+  // Math.floor pour convertir une coord flottante en index de cellule LED.
+  // Math.round décalerait la moitié droite/basse d'une cellule vers la voisine.
+  return snapSize > 1 ? Math.floor(v / snapSize) * snapSize : Math.floor(v);
 }
 
 function handlePointerDown(e) {
@@ -416,28 +474,29 @@ function handlePointerDown(e) {
     isDragging = false;
     isResizing = false;
     resizeHandle = null;
-    currentDrawingId = null;
     // Supprime la dernière stroke du pinceau si elle vient d'être amorcée
-    if (currentTool === 'pencil' && frames[currentFrameIndex].length > 0) {
-      const last = frames[currentFrameIndex][frames[currentFrameIndex].length - 1];
-      if (last.type === 'drawing' && last.points.length <= 2) {
-        frames[currentFrameIndex].pop();
+    if (currentTool === 'pencil' && currentDrawingId) {
+      const obj = getObject(currentDrawingId);
+      if (obj && obj.static.points.length <= 2) {
+        project.objects = project.objects.filter(o => o.id !== currentDrawingId);
       }
     }
+    currentDrawingId = null;
     shapePreview = null;
 
     const pts = [...canvasPointers.values()];
     pinchStartDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
 
-    const selItem = selectedItemId && frames[currentFrameIndex].find(i => i.id === selectedItemId);
-    if (selItem && (selItem.type === 'text' || selItem.type === 'image')) {
+    const selObj = getObject(selectedItemId);
+    if (selObj && (selObj.type === 'text' || selObj.type === 'image')) {
       pinchMode = 'resize';
       pushUndo();
+      const it = currentItems().find(i => i.sourceId === selObj.id);
       pinchStartItem = {
-        size: selItem.size || 16,
-        scale: selItem.scale || 1,
-        x: selItem.x,
-        y: selItem.y
+        size: it && it.size != null ? it.size : 16,
+        scale: it && it.scale != null ? it.scale : 1,
+        x: it ? it.x : 0,
+        y: it ? it.y : 0
       };
     } else {
       pinchMode = 'zoom';
@@ -490,9 +549,9 @@ function handlePointerDown(e) {
 
   // Resize handles
   if (selectedItemId) {
-    const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
-    if (item && (item.type === 'text' || item.type === 'image')) {
-      const bounds = getItemBounds(item);
+    const it = currentItems().find(i => i.sourceId === selectedItemId);
+    if (it && (it.type === 'text' || it.type === 'image')) {
+      const bounds = getItemBounds(it);
       const hHit = getResizeHitRadius();
       const isHit = (hx, hy) => Math.abs(x - hx) <= hHit && Math.abs(y - hy) <= hHit;
 
@@ -508,10 +567,10 @@ function handlePointerDown(e) {
         dragStartY = y;
         resizeStartWidth = bounds.width;
         resizeStartHeight = bounds.height;
-        resizeStartScale = item.scale || 1.0;
-        resizeStartSize = item.size || 16;
-        resizeItemStartX = item.x;
-        resizeItemStartY = item.y;
+        resizeStartScale = it.scale || 1.0;
+        resizeStartSize = it.size || 16;
+        resizeItemStartX = it.x;
+        resizeItemStartY = it.y;
         return;
       }
     }
@@ -521,13 +580,13 @@ function handlePointerDown(e) {
     pushUndo();
     pushRecentColor(pencilColor.value);
     isDragging = true;
-    currentDrawingId = generateId();
-    frames[currentFrameIndex].push({
-      id: currentDrawingId,
-      type: 'drawing',
+    const obj = makeDrawingObject({
+      points: [{ x: Math.floor(x), y: Math.floor(y) }],
       color: pencilColor.value,
-      points: [{ x: Math.round(x), y: Math.round(y) }]
+      f: currentFrameIndex
     });
+    project.objects.push(obj);
+    currentDrawingId = obj.id;
     renderCanvas();
     updateTimelineThumb(currentFrameIndex);
     return;
@@ -537,7 +596,7 @@ function handlePointerDown(e) {
 
   if (hitItem) {
     pushUndo();
-    selectedItemId = hitItem.id;
+    selectedItemId = hitItem.sourceId;
     isDragging = true;
     dragStartX = x;
     dragStartY = y;
@@ -545,10 +604,14 @@ function handlePointerDown(e) {
     itemStartY = hitItem.y;
 
     if (hitItem.type === 'drawing') {
-      hitItem.originalPoints = JSON.parse(JSON.stringify(hitItem.points));
+      // Pour drawing : on bouge l'objet via tracks.x/y, points restent statiques
+      // dans obj.static.points. itemStartX/Y captent l'offset courant (track).
     } else if (hitItem.type === 'shape') {
-      hitItem.originalX1 = hitItem.x1; hitItem.originalY1 = hitItem.y1;
-      hitItem.originalX2 = hitItem.x2; hitItem.originalY2 = hitItem.y2;
+      const obj = getObject(hitItem.sourceId);
+      if (obj) {
+        obj._dragOriginX1 = hitItem.x1; obj._dragOriginY1 = hitItem.y1;
+        obj._dragOriginX2 = hitItem.x2; obj._dragOriginY2 = hitItem.y2;
+      }
     }
 
     populatePropertiesPanel(hitItem);
@@ -568,19 +631,17 @@ function rgbToHex(r, g, b) {
 function applyColorToActiveTool(hex) {
   pencilColor.value = hex;
   textColor.value = hex;
-  const selItem = selectedItemId && frames[currentFrameIndex].find(i => i.id === selectedItemId);
-  if (selItem) {
-    if (selItem.type === 'text' || selItem.type === 'drawing' || selItem.type === 'shape') {
-      pushUndo();
-      selItem.color = hex;
-      renderCanvas();
-      updateTimelineThumb(currentFrameIndex);
-    }
+  const obj = getObject(selectedItemId);
+  if (obj && (obj.type === 'text' || obj.type === 'drawing' || obj.type === 'shape')) {
+    pushUndo();
+    updateObjectProp(obj, 'color', hex);
+    renderCanvas();
+    updateTimelineThumb(currentFrameIndex);
   }
 }
 
 // Flood-fill sur la représentation rasterisée de la frame courante.
-// Résultat stocké comme un item 'drawing' composé des pixels remplis.
+// Résultat stocké comme un objet 'drawing' composé des pixels remplis.
 function bucketFillAt(startX, startY, newColorHex) {
   if (startX < 0 || startX >= WIDTH || startY < 0 || startY >= HEIGHT) return;
   drawFrameToContext(offCtx, currentFrameIndex);
@@ -609,12 +670,8 @@ function bucketFillAt(startX, startY, newColorHex) {
     stack.push([x+1, y], [x-1, y], [x, y+1], [x, y-1]);
   }
   if (points.length === 0) return;
-  frames[currentFrameIndex].push({
-    id: generateId(),
-    type: 'drawing',
-    color: newColorHex,
-    points
-  });
+  const obj = makeDrawingObject({ points, color: newColorHex, f: currentFrameIndex });
+  project.objects.push(obj);
   pushRecentColor(newColorHex);
 }
 
@@ -631,14 +688,16 @@ function handlePointerMove(e) {
     const ratio = dist / (pinchStartDist || dist);
 
     if (pinchMode === 'resize') {
-      const item = selectedItemId && frames[currentFrameIndex].find(i => i.id === selectedItemId);
-      if (item && pinchStartItem) {
-        if (item.type === 'text') {
-          item.size = Math.max(1, Math.round(pinchStartItem.size * ratio));
-          if (textSize) textSize.value = item.size;
-        } else if (item.type === 'image') {
-          item.scale = Math.max(0.01, pinchStartItem.scale * ratio);
-          if (imgScale) imgScale.value = item.scale.toFixed(2);
+      const obj = getObject(selectedItemId);
+      if (obj && pinchStartItem) {
+        if (obj.type === 'text') {
+          const newSize = Math.max(1, Math.round(pinchStartItem.size * ratio));
+          updateObjectProp(obj, 'size', newSize);
+          if (textSize) textSize.value = newSize;
+        } else if (obj.type === 'image') {
+          const newScale = Math.max(0.01, pinchStartItem.scale * ratio);
+          updateObjectProp(obj, 'scale', newScale);
+          if (imgScale) imgScale.value = newScale.toFixed(2);
         }
         renderCanvas();
       }
@@ -663,29 +722,36 @@ function handlePointerMove(e) {
   if (isResizing && selectedItemId) {
     const dx = x - dragStartX;
     const dy = y - dragStartY;
-    const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
-    if (item) {
+    const obj = getObject(selectedItemId);
+    if (obj) {
        let currentWidth = resizeStartWidth;
-       
+       let newX = resizeItemStartX, newY = resizeItemStartY;
+
        if (resizeHandle === 'br') { currentWidth += dx; }
-       else if (resizeHandle === 'tl') { currentWidth -= dx; item.x = Math.round(resizeItemStartX + dx); item.y = Math.round(resizeItemStartY + dy); }
-       else if (resizeHandle === 'tr') { currentWidth += dx; item.y = Math.round(resizeItemStartY + dy); }
-       else if (resizeHandle === 'bl') { currentWidth -= dx; item.x = Math.round(resizeItemStartX + dx); }
-       
-       if (currentWidth < 2) currentWidth = 2; // Math.max(1) for scale division safety
-       
-       if (item.type === 'text') {
-          item.size = Math.max(1, Math.round(resizeStartSize * (currentWidth / Math.max(1, resizeStartWidth))));
-          textSize.value = item.size;
-          textX.value = item.x; 
-          textY.value = item.y;
-       } else if (item.type === 'image') {
-          item.scale = Math.max(0.01, resizeStartScale * (currentWidth / Math.max(1, resizeStartWidth)));
-          imgScale.value = item.scale.toFixed(2);
-          imgX.value = item.x; 
-          imgY.value = item.y;
+       else if (resizeHandle === 'tl') { currentWidth -= dx; newX = Math.round(resizeItemStartX + dx); newY = Math.round(resizeItemStartY + dy); }
+       else if (resizeHandle === 'tr') { currentWidth += dx; newY = Math.round(resizeItemStartY + dy); }
+       else if (resizeHandle === 'bl') { currentWidth -= dx; newX = Math.round(resizeItemStartX + dx); }
+
+       if (currentWidth < 2) currentWidth = 2;
+
+       if (obj.type === 'text') {
+          const newSize = Math.max(1, Math.round(resizeStartSize * (currentWidth / Math.max(1, resizeStartWidth))));
+          updateObjectProp(obj, 'size', newSize);
+          updateObjectProp(obj, 'x', newX);
+          updateObjectProp(obj, 'y', newY);
+          textSize.value = newSize;
+          textX.value = newX;
+          textY.value = newY;
+       } else if (obj.type === 'image') {
+          const newScale = Math.max(0.01, resizeStartScale * (currentWidth / Math.max(1, resizeStartWidth)));
+          updateObjectProp(obj, 'scale', newScale);
+          updateObjectProp(obj, 'x', newX);
+          updateObjectProp(obj, 'y', newY);
+          imgScale.value = newScale.toFixed(2);
+          imgX.value = newX;
+          imgY.value = newY;
        }
-       
+
        renderCanvas();
     }
     return;
@@ -694,50 +760,37 @@ function handlePointerMove(e) {
   if (!isDragging) return;
   
   if (currentTool === 'pencil' && currentDrawingId) {
-    const item = frames[currentFrameIndex].find(i => i.id === currentDrawingId);
-    if (item) {
-      item.points.push({ x: Math.round(x), y: Math.round(y) });
+    const obj = getObject(currentDrawingId);
+    if (obj) {
+      obj.static.points.push({ x: Math.floor(x), y: Math.floor(y) });
       renderCanvas();
     }
     return;
   }
-  
+
   if (!selectedItemId) return;
 
   const dx = x - dragStartX;
   const dy = y - dragStartY;
+  const obj = getObject(selectedItemId);
+  if (!obj) { renderCanvas(); return; }
 
-  const frameItems = frames[currentFrameIndex];
-  const item = frameItems.find(i => i.id === selectedItemId);
-  if (item) {
-    if (item.type === 'text' || item.type === 'image') {
-      item.x = applySnap(itemStartX + dx);
-      item.y = applySnap(itemStartY + dy);
-
-      if (item.type === 'text') {
-        textX.value = item.x;
-        textY.value = item.y;
-      } else if (item.type === 'image') {
-        imgX.value = item.x;
-        imgY.value = item.y;
-      }
-    } else if (item.type === 'drawing' && item.originalPoints) {
-      const rdx = applySnap(dx) - applySnap(0);
-      const rdy = applySnap(dy) - applySnap(0);
-      item.points = item.originalPoints.map(pt => ({
-        x: Math.round(pt.x + (snapSize > 1 ? rdx : dx)),
-        y: Math.round(pt.y + (snapSize > 1 ? rdy : dy))
-      }));
-    } else if (item.type === 'shape' && item.originalX1 !== undefined) {
-      const rdx = applySnap(dx) - applySnap(0);
-      const rdy = applySnap(dy) - applySnap(0);
-      const useDx = snapSize > 1 ? rdx : dx;
-      const useDy = snapSize > 1 ? rdy : dy;
-      item.x1 = Math.round(item.originalX1 + useDx);
-      item.y1 = Math.round(item.originalY1 + useDy);
-      item.x2 = Math.round(item.originalX2 + useDx);
-      item.y2 = Math.round(item.originalY2 + useDy);
-    }
+  if (obj.type === 'text' || obj.type === 'image' || obj.type === 'drawing') {
+    const newX = applySnap(itemStartX + dx);
+    const newY = applySnap(itemStartY + dy);
+    updateObjectProp(obj, 'x', newX);
+    updateObjectProp(obj, 'y', newY);
+    if (obj.type === 'text')  { textX.value = newX; textY.value = newY; }
+    if (obj.type === 'image') { imgX.value = newX;  imgY.value = newY; }
+  } else if (obj.type === 'shape' && obj._dragOriginX1 !== undefined) {
+    const rdx = applySnap(dx) - applySnap(0);
+    const rdy = applySnap(dy) - applySnap(0);
+    const useDx = snapSize > 1 ? rdx : dx;
+    const useDy = snapSize > 1 ? rdy : dy;
+    updateObjectProp(obj, 'x1', Math.round(obj._dragOriginX1 + useDx));
+    updateObjectProp(obj, 'y1', Math.round(obj._dragOriginY1 + useDy));
+    updateObjectProp(obj, 'x2', Math.round(obj._dragOriginX2 + useDx));
+    updateObjectProp(obj, 'y2', Math.round(obj._dragOriginY2 + useDy));
   }
 
   renderCanvas();
@@ -761,17 +814,30 @@ function handlePointerUp(e) {
     return;
   }
 
-  // Commit shape preview en item réel
+  // Commit shape preview en objet réel
   if (shapePreview) {
     pushUndo();
     pushRecentColor(shapePreview.color);
-    const committed = { ...shapePreview };
-    delete committed.id;
-    committed.id = generateId();
-    frames[currentFrameIndex].push(committed);
+    const obj = makeShapeObject({
+      shape: shapePreview.shape,
+      x1: shapePreview.x1, y1: shapePreview.y1,
+      x2: shapePreview.x2, y2: shapePreview.y2,
+      color: shapePreview.color,
+      f: currentFrameIndex
+    });
+    project.objects.push(obj);
     shapePreview = null;
     renderCanvas();
     updateTimelineThumb(currentFrameIndex);
+  }
+
+  // Nettoie les pseudo-props de drag posées sur l'objet shape
+  const draggingObj = getObject(selectedItemId);
+  if (draggingObj && draggingObj._dragOriginX1 !== undefined) {
+    delete draggingObj._dragOriginX1;
+    delete draggingObj._dragOriginY1;
+    delete draggingObj._dragOriginX2;
+    delete draggingObj._dragOriginY2;
   }
 
   isDragging = false;
@@ -787,10 +853,12 @@ function handlePointerUp(e) {
 }
 
 function findItemAtCoord(cx, cy) {
-  const frameItems = frames[currentFrameIndex];
-  // Iterate backwards to hit-test top-most items first
-  for (let i = frameItems.length - 1; i >= 0; i--) {
-    const item = frameItems[i];
+  const items = currentItems();
+  // Itération backwards pour hit-test top-most en premier
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i];
+    const obj = getObject(item.sourceId);
+    if (obj && obj.locked) continue;
     const bounds = getItemBounds(item);
     if (cx >= bounds.x && cx <= bounds.x + bounds.width &&
         cy >= bounds.y && cy <= bounds.y + bounds.height) {
@@ -825,12 +893,13 @@ function getItemBounds(item) {
     };
   } else if (item.type === 'drawing') {
     if (!item.points || item.points.length === 0) return {x:0,y:0,width:0,height:0};
+    const ox = item.x || 0, oy = item.y || 0;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     item.points.forEach(pt => {
-      minX = Math.min(minX, pt.x);
-      minY = Math.min(minY, pt.y);
-      maxX = Math.max(maxX, pt.x);
-      maxY = Math.max(maxY, pt.y);
+      minX = Math.min(minX, pt.x + ox);
+      minY = Math.min(minY, pt.y + oy);
+      maxX = Math.max(maxX, pt.x + ox);
+      maxY = Math.max(maxY, pt.y + oy);
     });
     return { x: minX - 1, y: minY - 1, width: maxX - minX + 3, height: maxY - minY + 3 };
   } else if (item.type === 'shape') {
@@ -858,24 +927,22 @@ function populatePropertiesPanel(item) {
 }
 
 function updateSelectedItemProperties(e) {
-  if (!selectedItemId) return;
-  const frameItems = frames[currentFrameIndex];
-  const item = frameItems.find(i => i.id === selectedItemId);
-  if (!item) return;
+  const obj = getObject(selectedItemId);
+  if (!obj) return;
 
-  if (item.type === 'text') {
-    item.text = textInput.value;
-    item.color = textColor.value;
-    item.size = parseInt(textSize.value) || 16;
-    item.x = parseInt(textX.value) || 0;
-    item.y = parseInt(textY.value) || 16;
-    item.font = textFont.value;
-  } else if (item.type === 'image') {
-    item.x = parseInt(imgX.value) || 0;
-    item.y = parseInt(imgY.value) || 0;
-    item.scale = parseFloat(imgScale.value) || 1.0;
+  if (obj.type === 'text') {
+    updateObjectProp(obj, 'text',  textInput.value);
+    updateObjectProp(obj, 'color', textColor.value);
+    updateObjectProp(obj, 'size',  parseInt(textSize.value) || 16);
+    updateObjectProp(obj, 'x',     parseInt(textX.value) || 0);
+    updateObjectProp(obj, 'y',     parseInt(textY.value) || 16);
+    updateObjectProp(obj, 'font',  textFont.value);
+  } else if (obj.type === 'image') {
+    updateObjectProp(obj, 'x',     parseInt(imgX.value) || 0);
+    updateObjectProp(obj, 'y',     parseInt(imgY.value) || 0);
+    updateObjectProp(obj, 'scale', parseFloat(imgScale.value) || 1.0);
   }
-  
+
   renderCanvas();
   updateTimelineThumb(currentFrameIndex);
 }
@@ -885,16 +952,15 @@ function updateSelectionUI() {
   selectionTools.hidden = !has;
   if (btnDeleteSelected) btnDeleteSelected.disabled = !has;
   if (has) {
-    const item = frames[currentFrameIndex] && frames[currentFrameIndex].find(i => i.id === selectedItemId);
-    if (item) sheetAutoOpen(item);
+    const it = currentItems().find(i => i.sourceId === selectedItemId);
+    if (it) sheetAutoOpen(it);
   }
 }
 
 function deleteSelectedItem() {
   if (!selectedItemId || isPlaying) return;
   pushUndo();
-  const frameItems = frames[currentFrameIndex];
-  frames[currentFrameIndex] = frameItems.filter(i => i.id !== selectedItemId);
+  project.objects = project.objects.filter(o => o.id !== selectedItemId);
   selectedItemId = null;
   updateSelectionUI();
   renderCanvas();
@@ -929,8 +995,9 @@ function togglePencilMode() {
 
 // --- Core Rendering ---
 function updateUI() {
-  if (currentFrameIndex >= frames.length) currentFrameIndex = frames.length - 1;
-  if (currentFrameIndex < 0 && frames.length > 0) currentFrameIndex = 0;
+  if (project.frameCount < 1) project.frameCount = 1;
+  if (currentFrameIndex >= project.frameCount) currentFrameIndex = project.frameCount - 1;
+  if (currentFrameIndex < 0) currentFrameIndex = 0;
   selectedItemId = null; // deselect on frame change
   updateSelectionUI();
   renderCanvas();
@@ -938,6 +1005,10 @@ function updateUI() {
 }
 
 function drawItem(context, item) {
+  const opacity = item.opacity != null ? item.opacity : 1;
+  if (opacity <= 0) return;
+  context.save();
+  if (opacity < 1) context.globalAlpha = opacity;
   if (item.type === 'text') {
     context.fillStyle = item.color;
     const font = item.font || '"JetBrains Mono", monospace';
@@ -949,10 +1020,12 @@ function drawItem(context, item) {
     if (img) context.drawImage(img, item.x, item.y, img.width * item.scale, img.height * item.scale);
   } else if (item.type === 'drawing') {
     context.fillStyle = item.color;
-    item.points.forEach(pt => context.fillRect(pt.x, pt.y, 1, 1));
+    const ox = item.x || 0, oy = item.y || 0;
+    item.points.forEach(pt => context.fillRect(pt.x + ox, pt.y + oy, 1, 1));
   } else if (item.type === 'shape') {
     drawShape(context, item);
   }
+  context.restore();
 }
 
 function drawShape(context, item) {
@@ -1011,7 +1084,7 @@ function drawPixelEllipse(context, x1, y1, x2, y2, color) {
 }
 
 function drawFrameToContext(context, frameIndex, drawActiveSelectionBox = false, opts = {}) {
-  const items = frames[frameIndex] || [];
+  const items = evaluateScene(project, frameIndex);
 
   // Fond
   context.fillStyle = '#050505';
@@ -1019,7 +1092,7 @@ function drawFrameToContext(context, frameIndex, drawActiveSelectionBox = false,
 
   // Onion skin : frame précédente en fantôme
   if (opts.onionSkin && frameIndex > 0) {
-    const prev = frames[frameIndex - 1] || [];
+    const prev = evaluateScene(project, frameIndex - 1);
     context.save();
     context.globalAlpha = 0.3;
     prev.forEach(it => drawItem(context, it));
@@ -1030,7 +1103,7 @@ function drawFrameToContext(context, frameIndex, drawActiveSelectionBox = false,
     drawItem(context, item);
 
     // Legacy Selection Box (thumbnails only)
-    if (drawActiveSelectionBox && item.id === selectedItemId) {
+    if (drawActiveSelectionBox && item.sourceId === selectedItemId) {
       const bounds = getItemBounds(item);
       context.strokeStyle = '#3b82f6';
       context.lineWidth = 1;
@@ -1047,7 +1120,7 @@ function drawFrameToContext(context, frameIndex, drawActiveSelectionBox = false,
 }
 
 function renderCanvas() {
-  if (frames.length === 0) return;
+  if (project.frameCount < 1) return;
 
   // 1. Draw logical scene to offscreen backbuffer
   drawFrameToContext(offCtx, currentFrameIndex, false, {
@@ -1092,7 +1165,7 @@ function renderCanvas() {
   
   // 6. Draw vector Selection UI on top of the LED grid
   if (!isPlaying && selectedItemId) {
-    const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
+    const item = currentItems().find(i => i.sourceId === selectedItemId);
     if (item) {
       const bounds = getItemBounds(item); // logical bounds
       
@@ -1138,7 +1211,7 @@ function updateTimelineThumb(index) {
 
 function renderTimeline() {
   timelineContainer.innerHTML = '';
-  frames.forEach((_, index) => {
+  for (let index = 0; index < project.frameCount; index++) {
     const container = document.createElement('div');
     container.className = `frame-thumb-container ${index === currentFrameIndex ? 'active' : ''}`;
     container.dataset.index = String(index);
@@ -1175,9 +1248,11 @@ function renderTimeline() {
       const from = parseInt(e.dataTransfer.getData('text/plain'), 10);
       const to = index;
       if (isNaN(from) || from === to) return;
+      // Réorganisation d'une frame = décalage des keyframes correspondants sur
+      // toutes les tracks. Implémentation simple : on shift les keyframes au
+      // niveau f des objets pour refléter le nouvel ordre. Phase 2/6 ré-affinera.
       pushUndo();
-      const [moved] = frames.splice(from, 1);
-      frames.splice(to, 0, moved);
+      shiftKeyframesForReorder(from, to);
       if (currentFrameIndex === from) currentFrameIndex = to;
       else if (from < currentFrameIndex && to >= currentFrameIndex) currentFrameIndex--;
       else if (from > currentFrameIndex && to <= currentFrameIndex) currentFrameIndex++;
@@ -1197,43 +1272,94 @@ function renderTimeline() {
     container.appendChild(thumbCanvas);
     container.appendChild(label);
     timelineContainer.appendChild(container);
-  });
+  }
+}
+
+// Quand une frame est déplacée dans la timeline, on remappe les valeurs f des
+// keyframes : les keyframes à f=from se retrouvent à f=to, et celles entre
+// from et to se décalent d'1 dans le sens inverse.
+function shiftKeyframesForReorder(from, to) {
+  if (from === to) return;
+  const remap = (f) => {
+    if (f === from) return to;
+    if (from < to) return (f > from && f <= to) ? f - 1 : f;
+    return (f >= to && f < from) ? f + 1 : f;
+  };
+  for (const obj of project.objects) {
+    for (const prop of Object.keys(obj.tracks)) {
+      const tr = obj.tracks[prop];
+      tr.forEach(k => { k.f = remap(k.f); });
+      tr.sort((a, b) => a.f - b.f);
+    }
+  }
 }
 
 // --- Frame Management ---
+// Note v3 : ajouter/dupliquer une frame = juste étendre frameCount. Les objets
+// existent globalement et restent visibles sur toute la timeline tant qu'ils
+// n'ont pas de visibleRanges qui dit le contraire.
 function addFrame() {
   pushUndo();
-  frames.push([]);
-  currentFrameIndex = frames.length - 1;
+  project.frameCount++;
+  currentFrameIndex = project.frameCount - 1;
   updateUI();
 }
 
 function duplicateFrame() {
-  if (frames.length === 0) return;
+  if (project.frameCount === 0) return;
   pushUndo();
-  const currentItems = frames[currentFrameIndex];
-  // Deep clone JSON-safe (items contiennent imgId, pas img)
-  const copyItems = JSON.parse(JSON.stringify(currentItems)).map(item => ({ ...item, id: generateId() }));
-  frames.splice(currentFrameIndex + 1, 0, copyItems);
+  // En v3, "dupliquer" la frame courante = insérer un nouveau slot juste après
+  // (les objets persistent), puis décaler les keyframes des frames suivantes.
+  shiftKeyframesAtOrAfter(currentFrameIndex + 1, +1);
+  project.frameCount++;
   currentFrameIndex++;
   updateUI();
 }
 
 function deleteFrame() {
-  pushUndo();
-  if (frames.length <= 1) {
-    frames[0] = []; // Just clear if it's the last one
-  } else {
-    frames.splice(currentFrameIndex, 1);
+  if (project.frameCount <= 1) {
+    // Cas dégénéré : on garde 1 frame mais on vide tout (purge keyframes à f=0
+    // pour les remettre à leur valeur par défaut). Plus simple : pas de purge,
+    // juste un signal "rien à faire".
+    return;
   }
+  pushUndo();
+  // Supprime les keyframes posés à currentFrameIndex et décale les suivants.
+  for (const obj of project.objects) {
+    for (const prop of Object.keys(obj.tracks)) {
+      const tr = obj.tracks[prop];
+      // Filtre les keyframes pile à currentFrameIndex puis shift les > currentFrameIndex
+      obj.tracks[prop] = tr.filter(k => k.f !== currentFrameIndex)
+                          .map(k => k.f > currentFrameIndex ? { ...k, f: k.f - 1 } : k);
+    }
+  }
+  project.frameCount--;
+  if (currentFrameIndex >= project.frameCount) currentFrameIndex = project.frameCount - 1;
   updateUI();
 }
 
 function clearCurrentFrame() {
-  if (frames.length === 0) return;
+  // En v3 il n'y a plus d'items "appartenant à" une frame en particulier. On
+  // interprète clear comme "retirer tous les objets dont au moins un keyframe
+  // tombe sur cette frame". Comportement plus prévisible : retire tous les
+  // objets visibles sur cette frame (= tout objet visible à f=currentFrameIndex).
+  if (project.frameCount === 0) return;
   pushUndo();
-  frames[currentFrameIndex] = [];
+  const visibleIds = new Set(currentItems().map(it => it.sourceId));
+  project.objects = project.objects.filter(o => !visibleIds.has(o.id));
+  selectedItemId = null;
   updateUI();
+}
+
+// Décale les keyframes >= fromF de delta sur tous les objets/tracks.
+function shiftKeyframesAtOrAfter(fromF, delta) {
+  for (const obj of project.objects) {
+    for (const prop of Object.keys(obj.tracks)) {
+      const tr = obj.tracks[prop];
+      tr.forEach(k => { if (k.f >= fromF) k.f += delta; });
+      tr.sort((a, b) => a.f - b.f);
+    }
+  }
 }
 
 // --- Playback ---
@@ -1246,18 +1372,18 @@ function togglePlay() {
 }
 
 function play() {
-  if (frames.length <= 1) return;
+  if (project.frameCount <= 1) return;
   selectedItemId = null; // Hide selection boxes during playback
   isPlaying = true;
   btnPlayPause.innerText = 'Pause';
   btnPlayPause.classList.remove('primary');
-  
+
   playInterval = setInterval(() => {
-    currentFrameIndex = (currentFrameIndex + 1) % frames.length;
+    currentFrameIndex = (currentFrameIndex + 1) % project.frameCount;
     renderCanvas();
     const thumbs = document.querySelectorAll('.frame-thumb-container');
     thumbs.forEach((t, i) => t.classList.toggle('active', i === currentFrameIndex));
-  }, 1000 / fps);
+  }, 1000 / project.fps);
 }
 
 function stop() {
@@ -1310,18 +1436,12 @@ function loadImageWithOptions(dataUrl, x, y, scale) {
 
     const imgId = generateId();
     imageCache.set(imgId, finalImg);
-    imageDataUrls.set(imgId, finalDataUrl);
+    project.imageDataUrls[imgId] = finalDataUrl;
 
     pushUndo();
-    const newItem = {
-      id: generateId(),
-      type: 'image',
-      imgId,
-      x, y,
-      scale: finalScale
-    };
-    frames[currentFrameIndex].push(newItem);
-    selectedItemId = newItem.id;
+    const obj = makeImageObject({ imgId, x, y, scale: finalScale, f: currentFrameIndex });
+    project.objects.push(obj);
+    selectedItemId = obj.id;
     updateSelectionUI();
     renderCanvas();
     updateTimelineThumb(currentFrameIndex);
@@ -1341,131 +1461,64 @@ function applyTextTool() {
   const font = textFont.value;
   pushRecentColor(color);
 
-  const newItem = {
-    id: generateId(),
-    type: 'text',
-    text: text,
-    font: font,
-    color: color,
-    size: size,
-    x: x,
-    y: y
-  };
-  
-  frames[currentFrameIndex].push(newItem);
-  selectedItemId = newItem.id;
+  const obj = makeTextObject({ text, font, x, y, size, color, f: currentFrameIndex });
+  project.objects.push(obj);
+  selectedItemId = obj.id;
   renderCanvas();
   updateTimelineThumb(currentFrameIndex);
 }
 
-// Generate a scrolling animation for the currently selected item
+// V3 : génère une animation en posant 2 keyframes (start à f=currentFrameIndex,
+// end à f=currentFrameIndex+steps-1) sur les tracks x, y, color de l'objet
+// sélectionné. La timeline s'étend si nécessaire (frameCount).
 async function generateAnimation() {
-  if (!selectedItemId) {
+  const obj = getObject(selectedItemId);
+  if (!obj) {
     showModal("Notice", "Please select an item on the canvas first to animate it.", false);
     return;
   }
-  
-  const selectedItem = frames[currentFrameIndex].find(i => i.id === selectedItemId);
-  if (!selectedItem) return;
 
   const startX = parseInt(animStartX.value) || 0;
   const startY = parseInt(animStartY.value) || 0;
   const endX = parseInt(animEndX.value) || 0;
   const endY = parseInt(animEndY.value) || 0;
-  
+
   const startCol = animStartColor.value;
   const endCol = animEndColor.value;
 
-  const hexToRgb = (hex) => {
-    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-    return result ? {
-      r: parseInt(result[1], 16),
-      g: parseInt(result[2], 16),
-      b: parseInt(result[3], 16)
-    } : { r: 255, g: 255, b: 255 };
-  };
-
-  const rgbToHex = (r, g, b) => {
-    return "#" + ((1 << 24) + (Math.round(r) << 16) + (Math.round(g) << 8) + Math.round(b)).toString(16).slice(1);
-  };
-
-  const c1 = hexToRgb(startCol);
-  const c2 = hexToRgb(endCol);
-
-  const mode = animMode.value; // 'duration' or 'speed'
+  const mode = animMode.value;
   const val = parseInt(animValue.value) || 1;
-  
+
   const dx = endX - startX;
   const dy = endY - startY;
   const distance = Math.sqrt(dx * dx + dy * dy);
-  
+
   let steps = 1;
-  if (mode === 'duration') {
-     steps = val;
-  } else if (mode === 'speed') {
-     steps = Math.max(1, Math.ceil(distance / val));
-  }
-  
+  if (mode === 'duration')   steps = val;
+  else if (mode === 'speed') steps = Math.max(1, Math.ceil(distance / val));
+
   const confirmed = await showModal(
     "Confirm Generation",
-    `This will generate ${steps} frames interpolating from (${startX},${startY}) to (${endX},${endY}) with color transition. Existing frames will be updated. Proceed?`,
+    `Pose 2 keyframes interpolant de (${startX},${startY}) à (${endX},${endY}) sur ${steps} frames. Étend la timeline si besoin. OK ?`,
     true
   );
   if (!confirmed) return;
 
   pushUndo();
   const easingName = animEasing ? animEasing.value : 'linear';
+  const startF = currentFrameIndex;
+  const endF = currentFrameIndex + Math.max(1, steps - 1);
 
-  // Base frame to clone if we need to append new frames (clone without the animated item to form a background)
-  const baseFrame = frames[currentFrameIndex].filter(i => i.id !== selectedItemId);
+  setKeyframe(obj, 'x', startF, startX, 'linear');
+  setKeyframe(obj, 'y', startF, startY, 'linear');
+  setKeyframe(obj, 'color', startF, startCol, 'linear');
+  setKeyframe(obj, 'x', endF, endX, easingName);
+  setKeyframe(obj, 'y', endF, endY, easingName);
+  setKeyframe(obj, 'color', endF, endCol, easingName);
 
-  for(let i = 0; i < steps; i++) {
-    const tRaw = steps > 1 ? (i / (steps - 1)) : 1;
-    const t = applyEasing(tRaw, easingName);
-    const currentX = Math.round(startX + dx * t);
-    const currentY = Math.round(startY + dy * t);
-
-    const curR = c1.r + (c2.r - c1.r) * t;
-    const curG = c1.g + (c2.g - c1.g) * t;
-    const curB = c1.b + (c2.b - c1.b) * t;
-    const currentColor = rgbToHex(curR, curG, curB);
-    
-    // Duplicate item properties (imgId reste valide après JSON round-trip)
-    let newItem = JSON.parse(JSON.stringify(selectedItem));
-    newItem.x = currentX;
-    newItem.y = currentY;
-    newItem.color = currentColor;
-
-    // Recalculate inner points for drawings
-    if (selectedItem.type === 'drawing') {
-      const offsetX = currentX - selectedItem.x;
-      const offsetY = currentY - selectedItem.y;
-      newItem.points = selectedItem.points.map(pt => ({ x: pt.x + offsetX, y: pt.y + offsetY }));
-      if (selectedItem.originalPoints) {
-         newItem.originalPoints = selectedItem.originalPoints.map(opt => ({ x: opt.x + offsetX, y: opt.y + offsetY }));
-      }
-    }
-
-    const targetFrameIndex = currentFrameIndex + i;
-
-    if (targetFrameIndex >= frames.length) {
-       // Frame neuve : base figée (sans l'item animé) + item repositionné
-       const newFrame = JSON.parse(JSON.stringify(baseFrame));
-       newFrame.push(newItem);
-       frames.push(newFrame);
-    } else {
-       // Overwrite the existing item in this target frame, or push it if it doesn't exist yet
-       const existingItemIndex = frames[targetFrameIndex].findIndex(k => k.id === selectedItemId);
-       if (existingItemIndex > -1) {
-          frames[targetFrameIndex][existingItemIndex] = newItem;
-       } else {
-          frames[targetFrameIndex].push(newItem);
-       }
-    }
-  }
-  
+  if (project.frameCount <= endF) project.frameCount = endF + 1;
   updateUI();
-  showModal("Success", `Generated ${steps} animation frames starting from frame ${currentFrameIndex + 1}.`, false);
+  showModal("Success", `Animation : ${steps} frames de la frame ${startF + 1} à ${endF + 1}.`, false);
 }
 
 // --- Video Export (.bin) ---
@@ -1478,14 +1531,14 @@ const exportProgressText = document.getElementById('export-progress-text');
 const exportStatusText = document.getElementById('export-status-text');
 
 async function exportToBin() {
-  if (frames.length === 0) {
+  if (project.frameCount === 0) {
     showModal("Notice", "Aucune frame à exporter.", false);
     return;
   }
 
   const filename = (exportFilename.value.trim() || 'video') + '.bin';
   const useCustomMapping = exportMapping.value === 'custom';
-  const totalFrames = frames.length;
+  const totalFrames = project.frameCount;
   const totalPixels = WIDTH * HEIGHT;
 
   btnExportVideo.disabled = true;
@@ -1621,13 +1674,13 @@ async function streamToBle() {
     return;
   }
   
-  if (frames.length === 0) {
+  if (project.frameCount === 0) {
     showModal("Notice", "Aucune frame à exporter.", false);
     return;
   }
 
   const useCustomMapping = exportMapping.value === 'custom';
-  const totalFrames = frames.length;
+  const totalFrames = project.frameCount;
   const totalPixels = WIDTH * HEIGHT;
 
   btnStreamBle.disabled = true;
@@ -1718,12 +1771,13 @@ async function streamToBle() {
 // === EXTRAS : easing, presets, palette, save/load, dithering, zoom, GIF ===
 // =========================================================================
 
-// ---- Animation presets ----
+// ---- Animation presets (V3 : pose des keyframes) ----
 function presetScroll(direction) {
-  if (!selectedItemId) { showModal('Notice', 'Sélectionne un item d\'abord.', false); return; }
-  const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
-  if (!item) return;
-  const b = getItemBounds(item);
+  const obj = getObject(selectedItemId);
+  if (!obj) { showModal('Notice', 'Sélectionne un item d\'abord.', false); return; }
+  const it = currentItems().find(i => i.sourceId === obj.id);
+  if (!it) return;
+  const b = getItemBounds(it);
   if (direction === 'left') {
     animStartX.value = WIDTH;              animStartY.value = Math.round(b.y);
     animEndX.value   = -Math.round(b.width); animEndY.value   = Math.round(b.y);
@@ -1731,55 +1785,53 @@ function presetScroll(direction) {
     animStartX.value = -Math.round(b.width); animStartY.value = Math.round(b.y);
     animEndX.value   = WIDTH;                animEndY.value   = Math.round(b.y);
   }
-  animStartColor.value = item.color || '#ffffff';
-  animEndColor.value = item.color || '#ffffff';
+  animStartColor.value = it.color || '#ffffff';
+  animEndColor.value   = it.color || '#ffffff';
   animMode.value = 'duration';
   animValue.value = 40;
   if (animEasing) animEasing.value = 'linear';
   generateAnimation();
 }
+
 function presetBlink() {
-  if (!selectedItemId) { showModal('Notice','Sélectionne un item.', false); return; }
-  const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
-  if (!item) return;
+  const obj = getObject(selectedItemId);
+  if (!obj) { showModal('Notice','Sélectionne un item.', false); return; }
   pushUndo();
+  // Blink = série de keyframes opacity en step (1/0/1/0...) sur 8 frames.
   const total = 8;
   for (let i = 0; i < total; i++) {
-    const targetFrameIndex = currentFrameIndex + i;
-    const baseFrame = frames[currentFrameIndex].filter(k => k.id !== selectedItemId);
-    const on = (i % 2 === 0);
-    const newFrame = JSON.parse(JSON.stringify(baseFrame));
-    if (on) {
-      const copy = JSON.parse(JSON.stringify(item));
-      newFrame.push(copy);
-    }
-    if (targetFrameIndex >= frames.length) frames.push(newFrame);
-    else frames[targetFrameIndex] = newFrame;
+    const f = currentFrameIndex + i;
+    const v = (i % 2 === 0) ? 1 : 0;
+    setKeyframe(obj, 'opacity', f, v, 'linear');
   }
+  const endF = currentFrameIndex + total - 1;
+  if (project.frameCount <= endF) project.frameCount = endF + 1;
   updateUI();
 }
+
 function presetFade(dir) {
-  if (!selectedItemId) { showModal('Notice','Sélectionne un item.', false); return; }
-  const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
-  if (!item) return;
-  animStartX.value = Math.round(item.x);
-  animStartY.value = Math.round(item.y);
-  animEndX.value   = Math.round(item.x);
-  animEndY.value   = Math.round(item.y);
-  const itemCol = item.color || '#ffffff';
-  if (dir === 'in') { animStartColor.value = '#000000'; animEndColor.value = itemCol; }
-  else              { animStartColor.value = itemCol;  animEndColor.value = '#000000'; }
-  animMode.value = 'duration';
-  animValue.value = 20;
-  if (animEasing) animEasing.value = 'ease-in-out';
-  generateAnimation();
+  const obj = getObject(selectedItemId);
+  if (!obj) { showModal('Notice','Sélectionne un item.', false); return; }
+  pushUndo();
+  const total = 20;
+  const startF = currentFrameIndex;
+  const endF = currentFrameIndex + total - 1;
+  if (dir === 'in') {
+    setKeyframe(obj, 'opacity', startF, 0, 'linear');
+    setKeyframe(obj, 'opacity', endF,   1, 'ease-in-out');
+  } else {
+    setKeyframe(obj, 'opacity', startF, 1, 'linear');
+    setKeyframe(obj, 'opacity', endF,   0, 'ease-in-out');
+  }
+  if (project.frameCount <= endF) project.frameCount = endF + 1;
+  updateUI();
 }
 
 // ---- Palette ----
 function renderPalette() {
   if (!paletteContainer) return;
   paletteContainer.innerHTML = '';
-  recentColors.forEach(c => {
+  project.recentColors.forEach(c => {
     const chip = document.createElement('button');
     chip.className = 'palette-chip';
     chip.style.backgroundColor = c;
@@ -1790,37 +1842,38 @@ function renderPalette() {
   });
 }
 
-// ---- Save / Load projet .json ----
+// ---- Save / Load projet .json (v3) ----
+// Le format v3 sérialise le `project` directement. Les anciennes versions
+// (frames[]) ne sont volontairement plus chargées.
 function serializeProject() {
-  const images = {};
-  imageDataUrls.forEach((v, k) => images[k] = v);
-  return {
-    version: 2,
-    width: WIDTH, height: HEIGHT,
-    fps,
-    frames,
-    images,
-    recentColors
-  };
+  return JSON.parse(JSON.stringify(project));
 }
 
 async function loadProjectFromObject(obj) {
-  if (!obj || !obj.frames) { showModal('Erreur','Fichier projet invalide.', false); return; }
+  if (!obj || obj.version !== SCENE_VERSION || !Array.isArray(obj.objects)) {
+    showModal('Erreur', `Fichier projet invalide ou format obsolète (v${obj && obj.version}). Cette version requiert v${SCENE_VERSION}.`, false);
+    return;
+  }
   // Reconstruit imageCache depuis les dataURL
   imageCache.clear();
-  imageDataUrls.clear();
-  const imgEntries = Object.entries(obj.images || {});
+  const imgEntries = Object.entries(obj.imageDataUrls || {});
   await Promise.all(imgEntries.map(([id, dataUrl]) => new Promise(res => {
     const im = new Image();
-    im.onload = () => { imageCache.set(id, im); imageDataUrls.set(id, dataUrl); res(); };
+    im.onload = () => { imageCache.set(id, im); res(); };
     im.onerror = () => res();
     im.src = dataUrl;
   })));
-  frames = obj.frames;
+  project = obj;
+  // Garanties minimales sur les champs (au cas où le fichier est corrompu)
+  if (typeof project.frameCount !== 'number' || project.frameCount < 1) project.frameCount = 1;
+  if (typeof project.fps !== 'number')   project.fps = 20;
+  if (!Array.isArray(project.recentColors) || project.recentColors.length === 0) {
+    project.recentColors = ['#ffffff', '#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff', '#ff8800'];
+  }
+  if (!project.imageDataUrls) project.imageDataUrls = {};
   currentFrameIndex = 0;
-  fps = obj.fps || 20;
-  if (inputFps) inputFps.value = fps;
-  if (Array.isArray(obj.recentColors)) { recentColors = obj.recentColors.slice(0, 8); renderPalette(); }
+  if (inputFps) inputFps.value = project.fps;
+  renderPalette();
   undoStack = []; redoStack = [];
   updateUndoButtons();
   selectedItemId = null;
@@ -1858,24 +1911,25 @@ async function handleLoadProjectFile(e) {
 async function newProject() {
   const ok = await showModal('Nouveau projet', 'Vider le projet en cours ? (cela efface tout, undo inclus)', true);
   if (!ok) return;
-  frames = [[]];
+  project = createEmptyProject({ width: WIDTH, height: HEIGHT, fps: 20, frameCount: 1 });
   currentFrameIndex = 0;
   undoStack = []; redoStack = [];
-  imageCache.clear(); imageDataUrls.clear();
+  imageCache.clear();
   selectedItemId = null;
   updateUndoButtons();
+  renderPalette();
   updateUI();
-  localStorage.removeItem('glougloubus-autosave');
+  localStorage.removeItem(AUTOSAVE_KEY);
 }
 
-// ---- Autosave ----
+// ---- Autosave (v3) ---- (clés déclarées en tête du fichier pour TDZ)
 let autosaveTimer = null;
 function scheduleAutosave() {
   if (autosaveTimer) clearTimeout(autosaveTimer);
   autosaveTimer = setTimeout(() => {
     try {
-      localStorage.setItem('glougloubus-autosave', JSON.stringify(serializeProject()));
-      localStorage.setItem('glougloubus-autosave-ts', String(Date.now()));
+      localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(serializeProject()));
+      localStorage.setItem(AUTOSAVE_TS_KEY, String(Date.now()));
     } catch (err) {
       // localStorage quota — silencieux, les images peuvent exploser la taille
       console.warn('Autosave skipped:', err.message);
@@ -1884,15 +1938,19 @@ function scheduleAutosave() {
 }
 
 async function tryRestoreAutosave() {
-  const raw = localStorage.getItem('glougloubus-autosave');
+  // Purge automatique des anciens autosaves v1/v2 (incompatibles)
+  localStorage.removeItem('glougloubus-autosave');
+  localStorage.removeItem('glougloubus-autosave-ts');
+
+  const raw = localStorage.getItem(AUTOSAVE_KEY);
   if (!raw) return;
   try {
     const obj = JSON.parse(raw);
-    if (!obj.frames || obj.frames.length === 0) return;
-    const ts = parseInt(localStorage.getItem('glougloubus-autosave-ts') || '0', 10);
+    if (obj.version !== SCENE_VERSION || !Array.isArray(obj.objects) || obj.objects.length === 0) return;
+    const ts = parseInt(localStorage.getItem(AUTOSAVE_TS_KEY) || '0', 10);
     const ago = Math.round((Date.now() - ts) / 1000);
     const ok = await showModal('Restaurer l\'autosave',
-      `Un projet sauvegardé automatiquement a été trouvé (il y a ${ago}s, ${obj.frames.length} frame(s)). Le restaurer ?`,
+      `Un projet sauvegardé automatiquement a été trouvé (il y a ${ago}s, ${obj.objects.length} objet(s)). Le restaurer ?`,
       true);
     if (ok) await loadProjectFromObject(obj);
   } catch {}
@@ -1916,24 +1974,35 @@ document.addEventListener('fullscreenchange', () => {
 });
 
 // ---- Zoom / Pan ----
+// Le container est flex-centré dans le wrapper. On utilise transform-origin:
+// center pour que scale() ne déplace pas le centre (sinon le coin haut-gauche
+// reste fixe et le container déborde toujours en bas-droite). viewPanX/Y est
+// alors un offset SUPPLÉMENTAIRE par rapport à la position centrée.
 function applyCanvasTransform() {
   if (!canvasWrapper) return;
   const container = canvasWrapper.querySelector('.canvas-container');
   if (!container) return;
   container.style.transform = `translate(${viewPanX}px, ${viewPanY}px) scale(${viewZoom})`;
-  container.style.transformOrigin = '0 0';
+  container.style.transformOrigin = '50% 50%';
 }
 function setZoom(z, centerX, centerY) {
   const newZ = Math.max(0.5, Math.min(8, z));
-  if (canvasWrapper && centerX !== undefined) {
-    const rect = canvas.getBoundingClientRect();
+  if (canvasWrapper) {
     const wrapperRect = canvasWrapper.getBoundingClientRect();
-    const cx = centerX - wrapperRect.left;
-    const cy = centerY - wrapperRect.top;
-    // Maintient le point sous le curseur
+    // Référentiel "depuis le centre du wrapper" : dx, dy = offset du point
+    // d'ancrage par rapport au centre du wrapper.
+    let dx, dy;
+    if (centerX !== undefined) {
+      dx = (centerX - wrapperRect.left) - wrapperRect.width / 2;
+      dy = (centerY - wrapperRect.top)  - wrapperRect.height / 2;
+    } else {
+      // Boutons +/- : ancre = centre wrapper → offset nul → reste centré.
+      dx = 0;
+      dy = 0;
+    }
     const ratio = newZ / viewZoom;
-    viewPanX = cx - (cx - viewPanX) * ratio;
-    viewPanY = cy - (cy - viewPanY) * ratio;
+    viewPanX = dx - (dx - viewPanX) * ratio;
+    viewPanY = dy - (dy - viewPanY) * ratio;
   }
   viewZoom = newZ;
   applyCanvasTransform();
@@ -2013,17 +2082,19 @@ async function sendBleTestPattern() {
 }
 // ---- Export GIF ----
 async function exportGif() {
-  if (frames.length === 0) { showModal('Notice', 'Aucune frame.', false); return; }
+  if (project.frameCount === 0) { showModal('Notice', 'Aucune frame.', false); return; }
   if (btnExportGif) btnExportGif.disabled = true;
   if (exportStatusText) exportStatusText.innerText = 'Génération GIF…';
   if (exportProgressContainer) exportProgressContainer.hidden = false;
 
+  const totalFrames = project.frameCount;
+
   // Collecte toutes les frames en RGBA + construit palette globale
   const framesRgb = [];
-  for (let i = 0; i < frames.length; i++) {
+  for (let i = 0; i < totalFrames; i++) {
     drawFrameToContext(offCtx, i, false);
     framesRgb.push(offCtx.getImageData(0, 0, WIDTH, HEIGHT));
-    if (exportProgressBar) exportProgressBar.style.width = `${Math.round((i+1)/frames.length*40)}%`;
+    if (exportProgressBar) exportProgressBar.style.width = `${Math.round((i+1)/totalFrames*40)}%`;
   }
 
   // Palette 256 via median-cut sur pixels concaténés
@@ -2035,7 +2106,7 @@ async function exportGif() {
   palette.forEach((c, i) => { paletteFlat[i*3] = c[0]; paletteFlat[i*3+1] = c[1]; paletteFlat[i*3+2] = c[2]; });
 
   // Délai par frame (en centièmes de secondes)
-  const delayCs = Math.max(2, Math.round(100 / fps));
+  const delayCs = Math.max(2, Math.round(100 / project.fps));
 
   // Construction du GIF (LZW)
   const enc = new GifEncoder(WIDTH, HEIGHT, paletteFlat, palette.length, delayCs);
@@ -2054,7 +2125,7 @@ async function exportGif() {
   a.href = url; a.download = 'glougloubus.gif'; a.click();
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 
-  if (exportStatusText) exportStatusText.innerText = `Terminé ! GIF ${frames.length} frames.`;
+  if (exportStatusText) exportStatusText.innerText = `Terminé ! GIF ${totalFrames} frames.`;
   if (exportProgressBar) exportProgressBar.style.width = '100%';
   if (btnExportGif) btnExportGif.disabled = false;
 }
@@ -2081,8 +2152,8 @@ function initShortcuts() {
       e.preventDefault(); duplicateFrame(); return;
     }
     if (ctrl && (e.key === 'c' || e.key === 'C') && selectedItemId && !inInput) {
-      const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
-      if (item) clipboardItem = JSON.parse(JSON.stringify(item));
+      const obj = getObject(selectedItemId);
+      if (obj) clipboardItem = JSON.parse(JSON.stringify(obj));
       return;
     }
     if (ctrl && (e.key === 'v' || e.key === 'V') && clipboardItem && !inInput) {
@@ -2090,9 +2161,13 @@ function initShortcuts() {
       pushUndo();
       const copy = JSON.parse(JSON.stringify(clipboardItem));
       copy.id = generateId();
-      copy.x = (copy.x || 0) + 2;
-      copy.y = (copy.y || 0) + 2;
-      frames[currentFrameIndex].push(copy);
+      // Décale x/y du clone à la frame courante (sur le track) pour éviter
+      // de superposer pile sur l'original.
+      const curX = getValueAt(copy.tracks && copy.tracks.x, currentFrameIndex, 0);
+      const curY = getValueAt(copy.tracks && copy.tracks.y, currentFrameIndex, 0);
+      setKeyframe(copy, 'x', currentFrameIndex, curX + 2);
+      setKeyframe(copy, 'y', currentFrameIndex, curY + 2);
+      project.objects.push(copy);
       selectedItemId = copy.id;
       renderCanvas(); updateTimelineThumb(currentFrameIndex); updateSelectionUI();
       return;
@@ -2125,23 +2200,32 @@ function initShortcuts() {
       currentFrameIndex = Math.max(0, currentFrameIndex - 1); updateUI(); return;
     }
     if (e.key === 'ArrowRight' || e.key === 'PageDown') {
-      currentFrameIndex = Math.min(frames.length - 1, currentFrameIndex + 1); updateUI(); return;
+      currentFrameIndex = Math.min(project.frameCount - 1, currentFrameIndex + 1); updateUI(); return;
     }
   });
 }
 
 function nudgeSelected(dx, dy) {
-  const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
-  if (!item) return;
+  const obj = getObject(selectedItemId);
+  if (!obj) return;
   pushUndo();
-  if (item.type === 'drawing') {
-    item.points = item.points.map(p => ({ x: p.x + dx, y: p.y + dy }));
-  } else if (item.type === 'shape') {
-    item.x1 += dx; item.x2 += dx; item.y1 += dy; item.y2 += dy;
+  if (obj.type === 'shape') {
+    const curX1 = getValueAt(obj.tracks.x1, currentFrameIndex, 0);
+    const curY1 = getValueAt(obj.tracks.y1, currentFrameIndex, 0);
+    const curX2 = getValueAt(obj.tracks.x2, currentFrameIndex, 0);
+    const curY2 = getValueAt(obj.tracks.y2, currentFrameIndex, 0);
+    updateObjectProp(obj, 'x1', curX1 + dx);
+    updateObjectProp(obj, 'y1', curY1 + dy);
+    updateObjectProp(obj, 'x2', curX2 + dx);
+    updateObjectProp(obj, 'y2', curY2 + dy);
   } else {
-    item.x += dx; item.y += dy;
+    const curX = getValueAt(obj.tracks.x, currentFrameIndex, 0);
+    const curY = getValueAt(obj.tracks.y, currentFrameIndex, 0);
+    updateObjectProp(obj, 'x', curX + dx);
+    updateObjectProp(obj, 'y', curY + dy);
   }
-  populatePropertiesPanel(item);
+  const it = currentItems().find(i => i.sourceId === obj.id);
+  if (it) populatePropertiesPanel(it);
   renderCanvas();
   updateTimelineThumb(currentFrameIndex);
   updateSelectionUI();

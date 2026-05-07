@@ -1,0 +1,238 @@
+// Modèle de scène v3 : project = { width, height, fps, frameCount, objects[], imageDataUrls{}, recentColors[] }
+//
+// Un OBJET est une entité globale qui existe sur toute la timeline.
+// - static: propriétés non animées (text, font, points, shape, imgId)
+// - tracks: { propName: [{ f, v, easing }, ...] } triés par f, propriétés animables
+// - visibleRanges: [[startF, endF], ...] | null (null = toujours visible)
+// - parentId: pour les groupes (null = top-level)
+//
+// evaluateScene(project, f) → renderableItems[] : produit des items "à plat"
+// pour le rendu, en interpolant les tracks au temps f. C'est l'équivalent du
+// frames[f] de l'ancien modèle, mais dérivé.
+
+import { applyEasing } from './easing.js';
+
+export const SCENE_VERSION = 3;
+
+// --- Création / IDs ---
+function randomId() {
+  return Math.random().toString(36).substring(2, 9);
+}
+
+function defaultName(type, id) {
+  const map = { text: 'Texte', image: 'Image', drawing: 'Tracé', shape: 'Forme', group: 'Groupe' };
+  return `${map[type] || type} ${id.slice(0, 4)}`;
+}
+
+export function createEmptyProject({ width, height, fps = 20, frameCount = 1 } = {}) {
+  return {
+    version: SCENE_VERSION,
+    width,
+    height,
+    fps,
+    frameCount: Math.max(1, frameCount),
+    objects: [],
+    imageDataUrls: {},
+    recentColors: ['#ffffff', '#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff', '#ff8800'],
+  };
+}
+
+// Crée un objet vide. Le caller doit ensuite poser ses propres keyframes initiaux
+// via setKeyframe(obj, prop, 0, value). On ne pose RIEN par défaut pour rester
+// explicite : un objet sans keyframes n'a pas de position définie.
+export function createObject(type, opts = {}) {
+  const id = opts.id || randomId();
+  return {
+    id,
+    name: opts.name || defaultName(type, id),
+    type,
+    visible: true,
+    locked: false,
+    parentId: opts.parentId || null,
+    static: { ...defaultStatic(type), ...(opts.static || {}) },
+    tracks: {},
+    visibleRanges: opts.visibleRanges || null,
+  };
+}
+
+function defaultStatic(type) {
+  switch (type) {
+    case 'text':    return { text: '', font: '"JetBrains Mono", monospace' };
+    case 'image':   return { imgId: null };
+    case 'drawing': return { points: [] };
+    case 'shape':   return { shape: 'rect' };
+    case 'group':   return {};
+  }
+  return {};
+}
+
+// --- Manipulation de keyframes ---
+export function setKeyframe(obj, prop, f, v, easing = 'linear') {
+  if (!obj.tracks[prop]) obj.tracks[prop] = [];
+  const track = obj.tracks[prop];
+  const idx = track.findIndex(k => k.f === f);
+  const kf = { f, v, easing };
+  if (idx !== -1) track[idx] = kf;
+  else {
+    track.push(kf);
+    track.sort((a, b) => a.f - b.f);
+  }
+}
+
+export function removeKeyframe(obj, prop, f) {
+  const track = obj.tracks[prop];
+  if (!track) return;
+  const idx = track.findIndex(k => k.f === f);
+  if (idx !== -1) track.splice(idx, 1);
+  if (track.length === 0) delete obj.tracks[prop];
+}
+
+// --- Évaluation d'une track à une frame f ---
+export function getValueAt(track, f, fallback) {
+  if (!track || track.length === 0) return fallback;
+  if (track.length === 1) return track[0].v;
+  if (f <= track[0].f) return track[0].v;
+  if (f >= track[track.length - 1].f) return track[track.length - 1].v;
+  // Recherche du segment encadrant f. Vu le faible nb de keyframes par track
+  // (typiquement < 10), une recherche linéaire est largement suffisante.
+  for (let i = 0; i < track.length - 1; i++) {
+    const a = track[i], b = track[i + 1];
+    if (f >= a.f && f <= b.f) {
+      const tt = (f - a.f) / (b.f - a.f);
+      const eased = applyEasing(tt, b.easing || a.easing || 'linear');
+      return interpolate(a.v, b.v, eased);
+    }
+  }
+  return fallback;
+}
+
+function interpolate(a, b, t) {
+  if (typeof a === 'number' && typeof b === 'number') {
+    return a + (b - a) * t;
+  }
+  if (typeof a === 'string' && typeof b === 'string' && a.startsWith('#') && b.startsWith('#')) {
+    return interpolateHex(a, b, t);
+  }
+  return t < 1 ? a : b;
+}
+
+function interpolateHex(a, b, t) {
+  const ar = parseInt(a.slice(1, 3), 16), ag = parseInt(a.slice(3, 5), 16), ab = parseInt(a.slice(5, 7), 16);
+  const br = parseInt(b.slice(1, 3), 16), bg = parseInt(b.slice(3, 5), 16), bb = parseInt(b.slice(5, 7), 16);
+  const r = Math.round(ar + (br - ar) * t);
+  const g = Math.round(ag + (bg - ag) * t);
+  const bl = Math.round(ab + (bb - ab) * t);
+  return '#' + ((1 << 24) + (r << 16) + (g << 8) + bl).toString(16).slice(1);
+}
+
+export function isVisibleAt(obj, f) {
+  if (!obj.visible) return false;
+  if (!obj.visibleRanges) return true;
+  return obj.visibleRanges.some(([s, e]) => f >= s && f <= e);
+}
+
+// --- Materialize : object + frame f → item plat à rasteriser ---
+// Retourne un item au format "ancien" (compatible avec drawItem) mais enrichi
+// d'un sourceId pointant vers l'objet d'origine (pour la sélection).
+function materialize(obj, f) {
+  const out = {
+    id: obj.id,
+    sourceId: obj.id,
+    type: obj.type,
+    opacity: getValueAt(obj.tracks.opacity, f, 1),
+    rotation: getValueAt(obj.tracks.rotation, f, 0),
+  };
+  if (obj.type === 'text') {
+    out.text = obj.static.text;
+    out.font = obj.static.font;
+    out.x = getValueAt(obj.tracks.x, f, 0);
+    out.y = getValueAt(obj.tracks.y, f, 0);
+    out.size = getValueAt(obj.tracks.size, f, 16);
+    out.color = getValueAt(obj.tracks.color, f, '#ffffff');
+  } else if (obj.type === 'image') {
+    out.imgId = obj.static.imgId;
+    out.x = getValueAt(obj.tracks.x, f, 0);
+    out.y = getValueAt(obj.tracks.y, f, 0);
+    out.scale = getValueAt(obj.tracks.scale, f, 1);
+  } else if (obj.type === 'drawing') {
+    out.points = obj.static.points;
+    out.x = getValueAt(obj.tracks.x, f, 0);
+    out.y = getValueAt(obj.tracks.y, f, 0);
+    out.color = getValueAt(obj.tracks.color, f, '#ffffff');
+  } else if (obj.type === 'shape') {
+    out.shape = obj.static.shape;
+    out.x1 = getValueAt(obj.tracks.x1, f, 0);
+    out.y1 = getValueAt(obj.tracks.y1, f, 0);
+    out.x2 = getValueAt(obj.tracks.x2, f, 0);
+    out.y2 = getValueAt(obj.tracks.y2, f, 0);
+    out.color = getValueAt(obj.tracks.color, f, '#ffffff');
+  }
+  return out;
+}
+
+// Évalue toute la scène à la frame f. Retourne un tableau d'items plats,
+// dans l'ordre de project.objects[] (= z-order ascendant). Les groupes ne
+// sont pas encore supportés en Phase 1 (parentId est ignoré ici).
+export function evaluateScene(project, f) {
+  const out = [];
+  for (const obj of project.objects) {
+    if (obj.type === 'group') continue;
+    if (!isVisibleAt(obj, f)) continue;
+    out.push(materialize(obj, f));
+  }
+  return out;
+}
+
+// --- Helpers pour les tools : crée un objet avec keyframes initiaux à f=0 ---
+export function makeTextObject({ text, font, x, y, size, color, f = 0 }) {
+  const obj = createObject('text', { static: { text, font } });
+  setKeyframe(obj, 'x', f, x);
+  setKeyframe(obj, 'y', f, y);
+  setKeyframe(obj, 'size', f, size);
+  setKeyframe(obj, 'color', f, color);
+  return obj;
+}
+
+export function makeImageObject({ imgId, x, y, scale, f = 0 }) {
+  const obj = createObject('image', { static: { imgId } });
+  setKeyframe(obj, 'x', f, x);
+  setKeyframe(obj, 'y', f, y);
+  setKeyframe(obj, 'scale', f, scale);
+  return obj;
+}
+
+export function makeDrawingObject({ points, color, f = 0 }) {
+  const obj = createObject('drawing', { static: { points: points || [] } });
+  setKeyframe(obj, 'x', f, 0);
+  setKeyframe(obj, 'y', f, 0);
+  setKeyframe(obj, 'color', f, color);
+  return obj;
+}
+
+export function makeShapeObject({ shape, x1, y1, x2, y2, color, f = 0 }) {
+  const obj = createObject('shape', { static: { shape } });
+  setKeyframe(obj, 'x1', f, x1);
+  setKeyframe(obj, 'y1', f, y1);
+  setKeyframe(obj, 'x2', f, x2);
+  setKeyframe(obj, 'y2', f, y2);
+  setKeyframe(obj, 'color', f, color);
+  return obj;
+}
+
+// --- Mise à jour d'une propriété à la frame courante ---
+// Si la propriété est animée (tracks.prop a > 1 keyframe), on insère/MAJ un keyframe à f.
+// Si pas animée (0 ou 1 keyframe), on remplace la valeur du keyframe initial (à f=0)
+// pour ne pas accidentellement créer une animation.
+export function setPropertyAtFrame(obj, prop, f, v, easing = 'linear') {
+  const track = obj.tracks[prop];
+  if (!track || track.length <= 1) {
+    // Pas animée : garde la propriété "statique" en MAJ le keyframe unique (ou en pose un à 0)
+    if (!track || track.length === 0) {
+      setKeyframe(obj, prop, 0, v, easing);
+    } else {
+      track[0].v = v;
+    }
+    return;
+  }
+  setKeyframe(obj, prop, f, v, easing);
+}
