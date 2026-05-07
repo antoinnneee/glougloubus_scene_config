@@ -31,7 +31,16 @@ import { renderGlobalTimeline } from './modules/timeline-global.js';
 const canvas = document.getElementById('led-canvas');
 const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
+// Plusieurs boutons play/pause peuvent coexister (topbar + timeline tab) — on
+// les adresse en bloc via leur classe partagée pour MAJ état/icône en sync.
 const btnPlayPause = document.getElementById('btn-play-pause');
+const playButtons = document.querySelectorAll('.play-btn');
+function setPlayButtonsState(playing) {
+  playButtons.forEach(b => {
+    b.innerText = playing ? 'Pause' : '▶';
+    b.classList.toggle('primary', !playing);
+  });
+}
 const inputFps = document.getElementById('fps-input');
 const btnClear = document.getElementById('btn-clear-canvas');
 
@@ -382,7 +391,7 @@ function init() {
   btnDelFrame.addEventListener('click', deleteFrame);
   btnClear.addEventListener('click', clearCurrentFrame);
 
-  btnPlayPause.addEventListener('click', togglePlay);
+  playButtons.forEach(b => b.addEventListener('click', togglePlay));
   inputFps.addEventListener('change', (e) => { setFps(parseInt(e.target.value) || 20); if(isPlaying) { stop(); play(); } });
 
   // Update button texts
@@ -1873,8 +1882,7 @@ function play() {
   if (project.frameCount <= 1) return;
   clearSelection(); // Hide selection boxes during playback
   isPlaying = true;
-  btnPlayPause.innerText = 'Pause';
-  btnPlayPause.classList.remove('primary');
+  setPlayButtonsState(true);
 
   playInterval = setInterval(() => {
     currentFrameIndex = (currentFrameIndex + 1) % project.frameCount;
@@ -1890,8 +1898,7 @@ function play() {
 
 function stop() {
   isPlaying = false;
-  btnPlayPause.innerText = 'Play';
-  btnPlayPause.classList.add('primary');
+  setPlayButtonsState(false);
   clearInterval(playInterval);
   updateUI();
 }
