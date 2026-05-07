@@ -30,7 +30,7 @@ export function sheetAutoOpen(item) {
   else activateTab('props');
 }
 
-export function initBottomSheet() {
+export function initBottomSheet({ onTabChange } = {}) {
   sheetEl = document.getElementById('bottom-sheet');
   handleEl = document.getElementById('sheet-handle');
   tabsEls = document.querySelectorAll('#sheet-tabs .tab');
@@ -43,6 +43,7 @@ export function initBottomSheet() {
       e.stopPropagation();
       activateTab(t.dataset.tab);
       setState('open');
+      onTabChange?.(t.dataset.tab);
     });
   });
 

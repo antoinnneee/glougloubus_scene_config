@@ -99,7 +99,8 @@
         <div class="sheet-handle" id="sheet-handle">
           <div class="grip"></div>
           <div class="sheet-tabs" id="sheet-tabs" role="tablist">
-            <button class="tab active" data-tab="props" role="tab">⚙ Props</button>
+            <button class="tab active" data-tab="layers" role="tab">🗂 Calques</button>
+            <button class="tab" data-tab="props" role="tab">⚙ Props</button>
             <button class="tab" data-tab="text" role="tab">🅣 Texte</button>
             <button class="tab" data-tab="image" role="tab">🖼 Image</button>
             <button class="tab" data-tab="anim" role="tab">▶ Anim</button>
@@ -110,8 +111,24 @@
 
         <div class="sheet-body">
 
+          <!-- PANE: Calques (layers panel) -->
+          <div class="tab-pane active" data-pane="layers" role="tabpanel">
+            <div class="layers-toolbar">
+              <span class="layers-count" id="layers-count">0 objet</span>
+              <span class="spacer"></span>
+              <button id="btn-layer-group" class="iconbtn" title="Grouper la sélection" aria-label="Grouper">📁</button>
+              <button id="btn-layer-ungroup" class="iconbtn" title="Dégrouper" aria-label="Dégrouper">📂</button>
+              <button id="btn-layer-up" class="iconbtn" title="Monter (avant-plan)" aria-label="Monter">▲</button>
+              <button id="btn-layer-down" class="iconbtn" title="Descendre (arrière-plan)" aria-label="Descendre">▼</button>
+              <button id="btn-layer-duplicate" class="iconbtn" title="Dupliquer" aria-label="Dupliquer">⎘</button>
+              <button id="btn-layer-delete" class="iconbtn danger" title="Supprimer" aria-label="Supprimer">🗑</button>
+            </div>
+            <div id="layers-list" class="layers-list"></div>
+            <p class="hint">Tape un calque pour le sélectionner. Glisse la poignée ⠿ pour réordonner. Double-tap le nom pour renommer.</p>
+          </div>
+
           <!-- PANE: Props (canvas options + selection editor) -->
-          <div class="tab-pane active" data-pane="props" role="tabpanel">
+          <div class="tab-pane" data-pane="props" role="tabpanel" hidden>
             <div class="row aux-row">
               <label class="aux-toggle">
                 <input type="checkbox" id="toggle-onion" />
@@ -195,57 +212,7 @@
 
           <!-- PANE: Animation -->
           <div class="tab-pane" data-pane="anim" role="tabpanel" hidden>
-            <p class="hint">Sélectionne un item, capture Start et End, puis génère.</p>
-
-            <div class="anim-block">
-              <div class="anim-title">Start</div>
-              <div class="row">
-                <label><span>X</span><input type="number" inputmode="numeric" id="anim-start-x" value="0"></label>
-                <label><span>Y</span><input type="number" inputmode="numeric" id="anim-start-y" value="0"></label>
-                <label><span>Color</span><input type="color" id="anim-start-color" value="#ffffff"></label>
-              </div>
-              <div class="row btn-row">
-                <button id="btn-anim-set-start" class="btn outline">Capture</button>
-                <button id="btn-anim-apply-start" class="btn outline">Apply</button>
-              </div>
-            </div>
-
-            <div class="anim-block">
-              <div class="anim-title">End</div>
-              <div class="row">
-                <label><span>X</span><input type="number" inputmode="numeric" id="anim-end-x" value="100"></label>
-                <label><span>Y</span><input type="number" inputmode="numeric" id="anim-end-y" value="0"></label>
-                <label><span>Color</span><input type="color" id="anim-end-color" value="#ffffff"></label>
-              </div>
-              <div class="row btn-row">
-                <button id="btn-anim-set-end" class="btn outline">Capture</button>
-                <button id="btn-anim-apply-end" class="btn outline">Apply</button>
-              </div>
-            </div>
-
-            <div class="row">
-              <label class="grow">
-                <span>Mode</span>
-                <select id="anim-mode">
-                  <option value="duration">Frames (durée)</option>
-                  <option value="speed">px/frame</option>
-                </select>
-              </label>
-              <label><span>Value</span><input type="number" inputmode="numeric" id="anim-value" value="20" min="1"></label>
-            </div>
-            <div class="row">
-              <label class="grow">
-                <span>Easing</span>
-                <select id="anim-easing">
-                  <option value="linear" selected>Linear</option>
-                  <option value="ease-in">Ease-in</option>
-                  <option value="ease-out">Ease-out</option>
-                  <option value="ease-in-out">Ease-in-out</option>
-                  <option value="bounce">Bounce</option>
-                </select>
-              </label>
-            </div>
-            <button id="btn-generate-anim" class="btn primary">Générer l'animation</button>
+            <div id="kf-editor"></div>
 
             <div class="section-title">Presets</div>
             <div class="preset-grid">

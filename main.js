@@ -11,8 +11,10 @@ import { initBottomSheet, sheetAutoOpen } from './modules/sheet.js';
 import {
   SCENE_VERSION,
   createEmptyProject,
+  createObject,
   evaluateScene,
   setKeyframe,
+  removeKeyframe,
   setPropertyAtFrame,
   getValueAt,
   makeTextObject,
@@ -20,6 +22,8 @@ import {
   makeDrawingObject,
   makeShapeObject,
 } from './modules/scene.js';
+import { renderKeyframeEditor } from './modules/keyframe-editor.js';
+import { renderLayersPanel } from './modules/layers-panel.js';
 
 // --- DOM Elements ---
 const canvas = document.getElementById('led-canvas');
@@ -70,21 +74,18 @@ const btnDeleteItem = document.getElementById('btn-delete-item');
 const btnTogglePencil = document.getElementById('btn-toggle-pencil');
 const pencilColor = document.getElementById('pencil-color');
 
-// Animation
-const animStartX = document.getElementById('anim-start-x');
-const animStartY = document.getElementById('anim-start-y');
-const animEndX = document.getElementById('anim-end-x');
-const animEndY = document.getElementById('anim-end-y');
-const animStartColor = document.getElementById('anim-start-color');
-const animEndColor = document.getElementById('anim-end-color');
-const animMode = document.getElementById('anim-mode');
-const animValue = document.getElementById('anim-value');
-const btnAnimSetStart = document.getElementById('btn-anim-set-start');
-const btnAnimSetEnd = document.getElementById('btn-anim-set-end');
-const btnAnimApplyStart = document.getElementById('btn-anim-apply-start');
-const btnAnimApplyEnd = document.getElementById('btn-anim-apply-end');
-const btnGenerateAnim = document.getElementById('btn-generate-anim');
-const animEasing = document.getElementById('anim-easing');
+// Layers (Phase 3 : panneau de calques)
+const layersListEl = document.getElementById('layers-list');
+const layersCountEl = document.getElementById('layers-count');
+const btnLayerUp = document.getElementById('btn-layer-up');
+const btnLayerDown = document.getElementById('btn-layer-down');
+const btnLayerDuplicate = document.getElementById('btn-layer-duplicate');
+const btnLayerDelete = document.getElementById('btn-layer-delete');
+const btnLayerGroup = document.getElementById('btn-layer-group');
+const btnLayerUngroup = document.getElementById('btn-layer-ungroup');
+
+// Animation (Phase 2 : éditeur de keyframes)
+const kfEditorEl = document.getElementById('kf-editor');
 const btnPresetScrollL = document.getElementById('btn-preset-scroll-left');
 const btnPresetScrollR = document.getElementById('btn-preset-scroll-right');
 const btnPresetBlink = document.getElementById('btn-preset-blink');
@@ -197,7 +198,41 @@ let viewPanX = 0;
 let viewPanY = 0;
 
 // Object Selection and Tool State
+// `selectedIds` est la source de vérité (Set d'ids). `selectedItemId` est un
+// cache du "primary" id (dernier ajouté à la sélection) pour les opérations
+// qui ne traitent qu'un seul objet (resize handles, keyframe editor, presets).
+let selectedIds = new Set();
 let selectedItemId = null;
+
+function syncPrimaryFromSet() {
+  if (selectedIds.size === 0) { selectedItemId = null; return; }
+  // Préserve le primary actuel s'il est toujours sélectionné, sinon prend le dernier ajouté
+  if (selectedItemId && selectedIds.has(selectedItemId)) return;
+  selectedItemId = [...selectedIds].pop();
+}
+function setSingleSelection(id) {
+  selectedIds.clear();
+  if (id) selectedIds.add(id);
+  selectedItemId = id || null;
+}
+function clearSelection() {
+  selectedIds.clear();
+  selectedItemId = null;
+}
+function addSelection(id) {
+  if (!id) return;
+  selectedIds.add(id);
+  selectedItemId = id; // le dernier ajouté devient primary
+}
+function removeFromSelection(id) {
+  selectedIds.delete(id);
+  if (selectedItemId === id) syncPrimaryFromSet();
+}
+function toggleSelection(id) {
+  if (!id) return;
+  if (selectedIds.has(id)) removeFromSelection(id);
+  else addSelection(id);
+}
 // 'select' | 'pencil' | 'eyedropper' | 'line' | 'rect' | 'rect-outline' | 'ellipse' | 'bucket'
 let currentTool = 'select';
 let isDragging = false;
@@ -256,7 +291,7 @@ function undo() {
   project = undoStack.pop();
   if (currentFrameIndex >= project.frameCount) currentFrameIndex = project.frameCount - 1;
   if (currentFrameIndex < 0) currentFrameIndex = 0;
-  selectedItemId = null;
+  clearSelection();
   updateUI();
   updateUndoButtons();
 }
@@ -267,7 +302,7 @@ function redo() {
   project = redoStack.pop();
   if (currentFrameIndex >= project.frameCount) currentFrameIndex = project.frameCount - 1;
   if (currentFrameIndex < 0) currentFrameIndex = 0;
-  selectedItemId = null;
+  clearSelection();
   updateUI();
   updateUndoButtons();
 }
@@ -337,57 +372,9 @@ function init() {
   btnApplyText.innerText = "Add Text";
   btnApplyImage.addEventListener('click', applyImageTool);
   btnApplyText.addEventListener('click', applyTextTool);
-  btnGenerateAnim.addEventListener('click', generateAnimation);
-
   btnConnectBle.addEventListener('click', connectBle);
   btnStreamBle.addEventListener('click', streamToBle);
 
-  btnAnimSetStart.addEventListener('click', () => {
-    const obj = getObject(selectedItemId);
-    if (!obj) return;
-    const item = currentItems().find(i => i.sourceId === obj.id);
-    if (!item) return;
-    animStartX.value = Math.round(item.x);
-    animStartY.value = Math.round(item.y);
-    if (item.color) animStartColor.value = item.color;
-  });
-
-  btnAnimSetEnd.addEventListener('click', () => {
-    const obj = getObject(selectedItemId);
-    if (!obj) return;
-    const item = currentItems().find(i => i.sourceId === obj.id);
-    if (!item) return;
-    animEndX.value = Math.round(item.x);
-    animEndY.value = Math.round(item.y);
-    if (item.color) animEndColor.value = item.color;
-  });
-
-  btnAnimApplyStart.addEventListener('click', () => {
-    const obj = getObject(selectedItemId);
-    if (!obj) return;
-    pushUndo();
-    updateObjectProp(obj, 'x', parseInt(animStartX.value) || 0);
-    updateObjectProp(obj, 'y', parseInt(animStartY.value) || 0);
-    updateObjectProp(obj, 'color', animStartColor.value);
-    renderCanvas();
-    updateTimelineThumb(currentFrameIndex);
-    const it = currentItems().find(i => i.sourceId === obj.id);
-    if (it) populatePropertiesPanel(it);
-  });
-
-  btnAnimApplyEnd.addEventListener('click', () => {
-    const obj = getObject(selectedItemId);
-    if (!obj) return;
-    pushUndo();
-    updateObjectProp(obj, 'x', parseInt(animEndX.value) || 0);
-    updateObjectProp(obj, 'y', parseInt(animEndY.value) || 0);
-    updateObjectProp(obj, 'color', animEndColor.value);
-    renderCanvas();
-    updateTimelineThumb(currentFrameIndex);
-    const it = currentItems().find(i => i.sourceId === obj.id);
-    if (it) populatePropertiesPanel(it);
-  });
-  
   btnDeleteItem.addEventListener('click', deleteSelectedItem);
   btnTogglePencil.addEventListener('click', togglePencilMode);
 
@@ -529,6 +516,7 @@ function handlePointerDown(e) {
     bucketFillAt(Math.floor(x), Math.floor(y), pencilColor.value);
     renderCanvas();
     updateTimelineThumb(currentFrameIndex);
+    updateLayersPanel();
     return;
   }
 
@@ -589,19 +577,35 @@ function handlePointerDown(e) {
     currentDrawingId = obj.id;
     renderCanvas();
     updateTimelineThumb(currentFrameIndex);
+    updateLayersPanel();
     return;
   }
 
   const hitItem = findItemAtCoord(x, y);
+  const additive = e.shiftKey;
 
   if (hitItem) {
     pushUndo();
-    selectedItemId = hitItem.sourceId;
-    isDragging = true;
-    dragStartX = x;
-    dragStartY = y;
-    itemStartX = hitItem.x;
-    itemStartY = hitItem.y;
+    if (additive) {
+      // Shift-click : toggle dans la sélection (sans démarrer un drag)
+      toggleSelection(hitItem.sourceId);
+    } else if (!selectedIds.has(hitItem.sourceId)) {
+      // Click sur un item non sélectionné : remplace la sélection
+      setSingleSelection(hitItem.sourceId);
+    }
+    // Si on click sur un item déjà sélectionné (et pas additive), on garde la
+    // sélection courante (utile pour drag groupé).
+
+    if (!additive) {
+      isDragging = true;
+      dragStartX = x;
+      dragStartY = y;
+      itemStartX = hitItem.x;
+      itemStartY = hitItem.y;
+      // Snapshot des positions de départ pour TOUS les objets sélectionnés
+      // (drag groupé : tous bougent ensemble du même delta).
+      captureGroupDragStart();
+    }
 
     if (hitItem.type === 'drawing') {
       // Pour drawing : on bouge l'objet via tracks.x/y, points restent statiques
@@ -615,13 +619,42 @@ function handlePointerDown(e) {
     }
 
     populatePropertiesPanel(hitItem);
+  } else if (currentTool === 'select') {
+    // Drag dans le vide avec l'outil sélection : démarre une marquee selection
+    if (!additive) clearSelection();
+    marqueeStart = { x, y };
+    marqueeRect = { x1: x, y1: y, x2: x, y2: y };
+    marqueeBaseSelection = additive ? new Set(selectedIds) : new Set();
+    isDragging = true;
   } else {
-    selectedItemId = null;
+    if (!additive) clearSelection();
   }
 
   updateSelectionUI();
   renderCanvas();
 }
+
+// Capture la position de départ de chaque objet sélectionné pour permettre
+// un drag groupé (tous bougent ensemble). On stocke (x,y) ou (x1,y1,x2,y2) selon
+// le type. Réinitialisé à chaque pointerdown.
+let groupDragStarts = new Map(); // id -> { x, y } ou { x1, y1, x2, y2 }
+function captureGroupDragStart() {
+  groupDragStarts.clear();
+  for (const id of selectedIds) {
+    const it = currentItems().find(i => i.sourceId === id);
+    if (!it) continue;
+    if (it.type === 'shape') {
+      groupDragStarts.set(id, { x1: it.x1, y1: it.y1, x2: it.x2, y2: it.y2 });
+    } else {
+      groupDragStarts.set(id, { x: it.x, y: it.y });
+    }
+  }
+}
+
+// État marquee selection (rectangle de sélection rubber-band)
+let marqueeStart = null;             // { x, y } en coords logiques
+let marqueeRect = null;              // { x1, y1, x2, y2 } courant
+let marqueeBaseSelection = null;     // Set d'ids présents au démarrage (additif Shift)
 
 function rgbToHex(r, g, b) {
   const h = (n) => n.toString(16).padStart(2, '0');
@@ -758,7 +791,7 @@ function handlePointerMove(e) {
   }
   
   if (!isDragging) return;
-  
+
   if (currentTool === 'pencil' && currentDrawingId) {
     const obj = getObject(currentDrawingId);
     if (obj) {
@@ -768,32 +801,71 @@ function handlePointerMove(e) {
     return;
   }
 
-  if (!selectedItemId) return;
+  // Marquee selection : MAJ rect et selectedIds en temps réel
+  if (marqueeStart) {
+    marqueeRect.x2 = x;
+    marqueeRect.y2 = y;
+    updateMarqueeSelection();
+    renderCanvas();
+    return;
+  }
+
+  if (selectedIds.size === 0) return;
 
   const dx = x - dragStartX;
   const dy = y - dragStartY;
-  const obj = getObject(selectedItemId);
-  if (!obj) { renderCanvas(); return; }
+  const dxSnap = snapSize > 1 ? (applySnap(dx) - applySnap(0)) : dx;
+  const dySnap = snapSize > 1 ? (applySnap(dy) - applySnap(0)) : dy;
 
-  if (obj.type === 'text' || obj.type === 'image' || obj.type === 'drawing') {
-    const newX = applySnap(itemStartX + dx);
-    const newY = applySnap(itemStartY + dy);
-    updateObjectProp(obj, 'x', newX);
-    updateObjectProp(obj, 'y', newY);
-    if (obj.type === 'text')  { textX.value = newX; textY.value = newY; }
-    if (obj.type === 'image') { imgX.value = newX;  imgY.value = newY; }
-  } else if (obj.type === 'shape' && obj._dragOriginX1 !== undefined) {
-    const rdx = applySnap(dx) - applySnap(0);
-    const rdy = applySnap(dy) - applySnap(0);
-    const useDx = snapSize > 1 ? rdx : dx;
-    const useDy = snapSize > 1 ? rdy : dy;
-    updateObjectProp(obj, 'x1', Math.round(obj._dragOriginX1 + useDx));
-    updateObjectProp(obj, 'y1', Math.round(obj._dragOriginY1 + useDy));
-    updateObjectProp(obj, 'x2', Math.round(obj._dragOriginX2 + useDx));
-    updateObjectProp(obj, 'y2', Math.round(obj._dragOriginY2 + useDy));
+  // Drag groupé : tous les sélectionnés bougent ensemble du même delta
+  // (par rapport à leurs positions de départ capturées au pointerdown).
+  for (const id of selectedIds) {
+    const obj = getObject(id);
+    if (!obj || obj.locked) continue;
+    const start = groupDragStarts.get(id);
+    if (!start) continue;
+
+    if (obj.type === 'text' || obj.type === 'image' || obj.type === 'drawing') {
+      const newX = applySnap(start.x + dx);
+      const newY = applySnap(start.y + dy);
+      updateObjectProp(obj, 'x', newX);
+      updateObjectProp(obj, 'y', newY);
+      if (id === selectedItemId) {
+        if (obj.type === 'text')  { textX.value = newX; textY.value = newY; }
+        if (obj.type === 'image') { imgX.value = newX;  imgY.value = newY; }
+      }
+    } else if (obj.type === 'shape') {
+      updateObjectProp(obj, 'x1', Math.round(start.x1 + dxSnap));
+      updateObjectProp(obj, 'y1', Math.round(start.y1 + dySnap));
+      updateObjectProp(obj, 'x2', Math.round(start.x2 + dxSnap));
+      updateObjectProp(obj, 'y2', Math.round(start.y2 + dySnap));
+    }
   }
 
   renderCanvas();
+}
+
+// Pendant un drag marquee, recalcule selectedIds = base ∪ items intersectant le rect.
+function updateMarqueeSelection() {
+  if (!marqueeRect) return;
+  const minX = Math.min(marqueeRect.x1, marqueeRect.x2);
+  const maxX = Math.max(marqueeRect.x1, marqueeRect.x2);
+  const minY = Math.min(marqueeRect.y1, marqueeRect.y2);
+  const maxY = Math.max(marqueeRect.y1, marqueeRect.y2);
+  const inside = new Set(marqueeBaseSelection || []);
+  const items = currentItems();
+  for (const it of items) {
+    const obj = getObject(it.sourceId);
+    if (!obj || obj.locked) continue;
+    const b = getItemBounds(it);
+    if (b.width === 0 && b.height === 0) continue;
+    // Intersection rectangles
+    const ix = b.x < maxX && (b.x + b.width) > minX;
+    const iy = b.y < maxY && (b.y + b.height) > minY;
+    if (ix && iy) inside.add(it.sourceId);
+  }
+  selectedIds = inside;
+  syncPrimaryFromSet();
 }
 
 function handlePointerUp(e) {
@@ -829,23 +901,38 @@ function handlePointerUp(e) {
     shapePreview = null;
     renderCanvas();
     updateTimelineThumb(currentFrameIndex);
+    updateLayersPanel();
   }
 
-  // Nettoie les pseudo-props de drag posées sur l'objet shape
-  const draggingObj = getObject(selectedItemId);
-  if (draggingObj && draggingObj._dragOriginX1 !== undefined) {
-    delete draggingObj._dragOriginX1;
-    delete draggingObj._dragOriginY1;
-    delete draggingObj._dragOriginX2;
-    delete draggingObj._dragOriginY2;
+  // Commit marquee selection
+  if (marqueeStart) {
+    marqueeStart = null;
+    marqueeRect = null;
+    marqueeBaseSelection = null;
+    isDragging = false;
+    renderCanvas();
+    updateSelectionUI();
+    return;
+  }
+
+  // Nettoie les pseudo-props de drag posées sur les objets shape sélectionnés
+  for (const id of selectedIds) {
+    const obj = getObject(id);
+    if (obj && obj._dragOriginX1 !== undefined) {
+      delete obj._dragOriginX1;
+      delete obj._dragOriginY1;
+      delete obj._dragOriginX2;
+      delete obj._dragOriginY2;
+    }
   }
 
   isDragging = false;
   isResizing = false;
   resizeHandle = null;
   currentDrawingId = null;
+  groupDragStarts.clear();
 
-  if (selectedItemId) {
+  if (selectedIds.size > 0) {
     renderCanvas();
     updateTimelineThumb(currentFrameIndex);
     updateSelectionUI();
@@ -955,13 +1042,188 @@ function updateSelectionUI() {
     const it = currentItems().find(i => i.sourceId === selectedItemId);
     if (it) sheetAutoOpen(it);
   }
+  updateKeyframeEditor();
+  updateLayersPanel();
+}
+
+// --- Layers panel (Phase 3) ---
+function updateLayersPanel() {
+  if (!layersListEl) return;
+  renderLayersPanel(layersListEl, {
+    project,
+    selectedIds,
+    callbacks: {
+      onSelect(id, modifier) {
+        if (modifier) {
+          toggleSelection(id);
+        } else {
+          setSingleSelection(id);
+        }
+        const it = currentItems().find(i => i.sourceId === selectedItemId);
+        if (it) populatePropertiesPanel(it);
+        renderCanvas();
+        updateSelectionUI();
+      },
+      onToggleVisible(id) {
+        const obj = getObject(id);
+        if (!obj) return;
+        pushUndo();
+        obj.visible = !obj.visible;
+        renderCanvas();
+        updateLayersPanel();
+        updateTimelineThumb(currentFrameIndex);
+      },
+      onToggleLock(id) {
+        const obj = getObject(id);
+        if (!obj) return;
+        pushUndo();
+        obj.locked = !obj.locked;
+        updateLayersPanel();
+      },
+      onRename(id, name) {
+        const obj = getObject(id);
+        if (!obj) return;
+        pushUndo();
+        obj.name = name;
+        updateLayersPanel();
+      },
+      onReorder(fromIdx, toIdx) {
+        if (fromIdx === toIdx) return;
+        if (fromIdx < 0 || fromIdx >= project.objects.length) return;
+        if (toIdx < 0 || toIdx >= project.objects.length) return;
+        pushUndo();
+        const [obj] = project.objects.splice(fromIdx, 1);
+        project.objects.splice(toIdx, 0, obj);
+        renderCanvas();
+        updateLayersPanel();
+        updateTimelineThumb(currentFrameIndex);
+      },
+      onDuplicate(id) {
+        const obj = getObject(id);
+        if (!obj) return;
+        pushUndo();
+        const copy = JSON.parse(JSON.stringify(obj));
+        copy.id = generateId();
+        if (copy.tracks && copy.tracks.x) {
+          const curX = getValueAt(copy.tracks.x, currentFrameIndex, 0);
+          setKeyframe(copy, 'x', currentFrameIndex, curX + 2);
+        }
+        if (copy.tracks && copy.tracks.y) {
+          const curY = getValueAt(copy.tracks.y, currentFrameIndex, 0);
+          setKeyframe(copy, 'y', currentFrameIndex, curY + 2);
+        }
+        const origIdx = project.objects.findIndex(o => o.id === id);
+        project.objects.splice(origIdx + 1, 0, copy);
+        setSingleSelection(copy.id);
+        renderCanvas();
+        updateSelectionUI();
+        updateTimelineThumb(currentFrameIndex);
+      },
+      onDelete(id) {
+        pushUndo();
+        project.objects = project.objects.filter(o => o.id !== id);
+        if (selectedIds.has(id)) removeFromSelection(id);
+        renderCanvas();
+        updateSelectionUI();
+        updateTimelineThumb(currentFrameIndex);
+      },
+      onSendToTop(id) {
+        const idx = project.objects.findIndex(o => o.id === id);
+        if (idx === -1 || idx === project.objects.length - 1) return;
+        pushUndo();
+        const [obj] = project.objects.splice(idx, 1);
+        project.objects.push(obj);
+        renderCanvas();
+        updateLayersPanel();
+        updateTimelineThumb(currentFrameIndex);
+      },
+      onSendToBottom(id) {
+        const idx = project.objects.findIndex(o => o.id === id);
+        if (idx <= 0) return;
+        pushUndo();
+        const [obj] = project.objects.splice(idx, 1);
+        project.objects.unshift(obj);
+        renderCanvas();
+        updateLayersPanel();
+        updateTimelineThumb(currentFrameIndex);
+      },
+    },
+  });
+  if (layersCountEl) {
+    const n = project.objects.length;
+    layersCountEl.textContent = `${n} objet${n > 1 ? 's' : ''}`;
+  }
+  // Toolbar buttons : actifs uniquement si une sélection existe
+  const has = !!selectedItemId;
+  [btnLayerUp, btnLayerDown, btnLayerDuplicate, btnLayerDelete].forEach(b => {
+    if (b) b.disabled = !has;
+  });
+}
+
+function updateKeyframeEditor() {
+  if (!kfEditorEl) return;
+  const obj = getObject(selectedItemId);
+  renderKeyframeEditor(kfEditorEl, {
+    obj,
+    currentFrame: currentFrameIndex,
+    frameCount: project.frameCount,
+    callbacks: {
+      onAdd(prop, f) {
+        if (!obj) return;
+        const it = currentItems().find(i => i.sourceId === obj.id);
+        const v = (it && it[prop] !== undefined) ? it[prop] : (obj.tracks[prop]?.[0]?.v ?? 0);
+        pushUndo();
+        setKeyframe(obj, prop, f, v);
+        renderCanvas();
+        updateKeyframeEditor();
+      },
+      onRemove(prop, f) {
+        if (!obj) return;
+        pushUndo();
+        removeKeyframe(obj, prop, f);
+        renderCanvas();
+        updateKeyframeEditor();
+      },
+      onSeek(f) {
+        currentFrameIndex = Math.max(0, Math.min(project.frameCount - 1, f));
+        renderCanvas();
+        renderTimeline();
+        updateKeyframeEditor();
+      },
+      onMove(prop, oldF, newF) {
+        if (!obj) return;
+        const track = obj.tracks[prop];
+        if (!track) return;
+        const kf = track.find(k => k.f === oldF);
+        if (!kf) return;
+        const { v, easing } = kf;
+        pushUndo();
+        removeKeyframe(obj, prop, oldF);
+        setKeyframe(obj, prop, newF, v, easing);
+        renderCanvas();
+        updateKeyframeEditor();
+      },
+      onEasing(prop, f, easing) {
+        if (!obj) return;
+        const track = obj.tracks[prop];
+        if (!track) return;
+        const kf = track.find(k => k.f === f);
+        if (!kf) return;
+        pushUndo();
+        kf.easing = easing;
+        renderCanvas();
+        updateKeyframeEditor();
+      },
+    },
+  });
 }
 
 function deleteSelectedItem() {
-  if (!selectedItemId || isPlaying) return;
+  if (selectedIds.size === 0 || isPlaying) return;
   pushUndo();
-  project.objects = project.objects.filter(o => o.id !== selectedItemId);
-  selectedItemId = null;
+  const toRemove = new Set(selectedIds);
+  project.objects = project.objects.filter(o => !toRemove.has(o.id));
+  clearSelection();
   updateSelectionUI();
   renderCanvas();
   updateTimelineThumb(currentFrameIndex);
@@ -970,7 +1232,7 @@ function deleteSelectedItem() {
 function setTool(tool) {
   currentTool = tool;
   if (tool !== 'select') {
-    selectedItemId = null;
+    clearSelection();
     updateSelectionUI();
     renderCanvas();
   }
@@ -998,7 +1260,7 @@ function updateUI() {
   if (project.frameCount < 1) project.frameCount = 1;
   if (currentFrameIndex >= project.frameCount) currentFrameIndex = project.frameCount - 1;
   if (currentFrameIndex < 0) currentFrameIndex = 0;
-  selectedItemId = null; // deselect on frame change
+  clearSelection(); // deselect on frame change
   updateSelectionUI();
   renderCanvas();
   renderTimeline();
@@ -1164,24 +1426,27 @@ function renderCanvas() {
   }
   
   // 6. Draw vector Selection UI on top of the LED grid
-  if (!isPlaying && selectedItemId) {
-    const item = currentItems().find(i => i.sourceId === selectedItemId);
-    if (item) {
-      const bounds = getItemBounds(item); // logical bounds
-      
+  if (!isPlaying && selectedIds.size > 0) {
+    const items = currentItems();
+    const singleSelection = selectedIds.size === 1;
+    for (const it of items) {
+      if (!selectedIds.has(it.sourceId)) continue;
+      const bounds = getItemBounds(it);
       const sx = bounds.x * scaleX;
       const sy = bounds.y * scaleY;
       const sw = bounds.width * scaleX;
       const sh = bounds.height * scaleY;
-      
-      ctx.strokeStyle = '#3b82f6';
-      ctx.lineWidth = 2;
-      ctx.setLineDash([6, 6]);
+
+      // Box bleu pour primary, plus discret pour les autres
+      const isPrimary = it.sourceId === selectedItemId;
+      ctx.strokeStyle = isPrimary ? '#3b82f6' : '#60a5fa';
+      ctx.lineWidth = isPrimary ? 2 : 1.5;
+      ctx.setLineDash(isPrimary ? [6, 6] : [3, 4]);
       ctx.strokeRect(sx, sy, sw, sh);
-      ctx.setLineDash([]); // Reset
-      
-      // Draw 4 resize handles — taille ~18 CSS px quelle que soit la taille d'affichage
-      if (item.type === 'text' || item.type === 'image') {
+      ctx.setLineDash([]);
+
+      // Resize handles : uniquement si sélection unique (text/image)
+      if (singleSelection && (it.type === 'text' || it.type === 'image')) {
         const cssWidth = canvas.getBoundingClientRect().width || canvas.width;
         const bufferPerCss = canvas.width / cssWidth;
         const hSize = 18 * bufferPerCss;
@@ -1192,12 +1457,27 @@ function renderCanvas() {
           ctx.fillRect(hx - hSize/2, hy - hSize/2, hSize, hSize);
           ctx.strokeRect(hx - hSize/2, hy - hSize/2, hSize, hSize);
         };
-        drawHandle(sx, sy); // top-left
-        drawHandle(sx + sw, sy); // top-right
-        drawHandle(sx, sy + sh); // bottom-left
-        drawHandle(sx + sw, sy + sh); // bottom-right
+        drawHandle(sx, sy);
+        drawHandle(sx + sw, sy);
+        drawHandle(sx, sy + sh);
+        drawHandle(sx + sw, sy + sh);
       }
     }
+  }
+
+  // 7. Marquee selection rectangle (pendant drag dans le vide)
+  if (!isPlaying && marqueeRect) {
+    const minX = Math.min(marqueeRect.x1, marqueeRect.x2) * scaleX;
+    const maxX = Math.max(marqueeRect.x1, marqueeRect.x2) * scaleX;
+    const minY = Math.min(marqueeRect.y1, marqueeRect.y2) * scaleY;
+    const maxY = Math.max(marqueeRect.y1, marqueeRect.y2) * scaleY;
+    ctx.fillStyle = 'rgba(59,130,246,0.12)';
+    ctx.fillRect(minX, minY, maxX - minX, maxY - minY);
+    ctx.strokeStyle = '#3b82f6';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 4]);
+    ctx.strokeRect(minX, minY, maxX - minX, maxY - minY);
+    ctx.setLineDash([]);
   }
 }
 
@@ -1347,7 +1627,7 @@ function clearCurrentFrame() {
   pushUndo();
   const visibleIds = new Set(currentItems().map(it => it.sourceId));
   project.objects = project.objects.filter(o => !visibleIds.has(o.id));
-  selectedItemId = null;
+  clearSelection();
   updateUI();
 }
 
@@ -1373,7 +1653,7 @@ function togglePlay() {
 
 function play() {
   if (project.frameCount <= 1) return;
-  selectedItemId = null; // Hide selection boxes during playback
+  clearSelection(); // Hide selection boxes during playback
   isPlaying = true;
   btnPlayPause.innerText = 'Pause';
   btnPlayPause.classList.remove('primary');
@@ -1441,7 +1721,7 @@ function loadImageWithOptions(dataUrl, x, y, scale) {
     pushUndo();
     const obj = makeImageObject({ imgId, x, y, scale: finalScale, f: currentFrameIndex });
     project.objects.push(obj);
-    selectedItemId = obj.id;
+    setSingleSelection(obj.id);
     updateSelectionUI();
     renderCanvas();
     updateTimelineThumb(currentFrameIndex);
@@ -1463,62 +1743,10 @@ function applyTextTool() {
 
   const obj = makeTextObject({ text, font, x, y, size, color, f: currentFrameIndex });
   project.objects.push(obj);
-  selectedItemId = obj.id;
+  setSingleSelection(obj.id);
+  updateSelectionUI();
   renderCanvas();
   updateTimelineThumb(currentFrameIndex);
-}
-
-// V3 : génère une animation en posant 2 keyframes (start à f=currentFrameIndex,
-// end à f=currentFrameIndex+steps-1) sur les tracks x, y, color de l'objet
-// sélectionné. La timeline s'étend si nécessaire (frameCount).
-async function generateAnimation() {
-  const obj = getObject(selectedItemId);
-  if (!obj) {
-    showModal("Notice", "Please select an item on the canvas first to animate it.", false);
-    return;
-  }
-
-  const startX = parseInt(animStartX.value) || 0;
-  const startY = parseInt(animStartY.value) || 0;
-  const endX = parseInt(animEndX.value) || 0;
-  const endY = parseInt(animEndY.value) || 0;
-
-  const startCol = animStartColor.value;
-  const endCol = animEndColor.value;
-
-  const mode = animMode.value;
-  const val = parseInt(animValue.value) || 1;
-
-  const dx = endX - startX;
-  const dy = endY - startY;
-  const distance = Math.sqrt(dx * dx + dy * dy);
-
-  let steps = 1;
-  if (mode === 'duration')   steps = val;
-  else if (mode === 'speed') steps = Math.max(1, Math.ceil(distance / val));
-
-  const confirmed = await showModal(
-    "Confirm Generation",
-    `Pose 2 keyframes interpolant de (${startX},${startY}) à (${endX},${endY}) sur ${steps} frames. Étend la timeline si besoin. OK ?`,
-    true
-  );
-  if (!confirmed) return;
-
-  pushUndo();
-  const easingName = animEasing ? animEasing.value : 'linear';
-  const startF = currentFrameIndex;
-  const endF = currentFrameIndex + Math.max(1, steps - 1);
-
-  setKeyframe(obj, 'x', startF, startX, 'linear');
-  setKeyframe(obj, 'y', startF, startY, 'linear');
-  setKeyframe(obj, 'color', startF, startCol, 'linear');
-  setKeyframe(obj, 'x', endF, endX, easingName);
-  setKeyframe(obj, 'y', endF, endY, easingName);
-  setKeyframe(obj, 'color', endF, endCol, easingName);
-
-  if (project.frameCount <= endF) project.frameCount = endF + 1;
-  updateUI();
-  showModal("Success", `Animation : ${steps} frames de la frame ${startF + 1} à ${endF + 1}.`, false);
 }
 
 // --- Video Export (.bin) ---
@@ -1778,44 +2006,50 @@ function presetScroll(direction) {
   const it = currentItems().find(i => i.sourceId === obj.id);
   if (!it) return;
   const b = getItemBounds(it);
+  const y = Math.round(b.y);
+  const color = it.color || '#ffffff';
+  const startF = currentFrameIndex;
+  const endF = currentFrameIndex + 39;
+  let startX, endX;
   if (direction === 'left') {
-    animStartX.value = WIDTH;              animStartY.value = Math.round(b.y);
-    animEndX.value   = -Math.round(b.width); animEndY.value   = Math.round(b.y);
+    startX = WIDTH; endX = -Math.round(b.width);
   } else {
-    animStartX.value = -Math.round(b.width); animStartY.value = Math.round(b.y);
-    animEndX.value   = WIDTH;                animEndY.value   = Math.round(b.y);
+    startX = -Math.round(b.width); endX = WIDTH;
   }
-  animStartColor.value = it.color || '#ffffff';
-  animEndColor.value   = it.color || '#ffffff';
-  animMode.value = 'duration';
-  animValue.value = 40;
-  if (animEasing) animEasing.value = 'linear';
-  generateAnimation();
+  pushUndo();
+  setKeyframe(obj, 'x', startF, startX, 'linear');
+  setKeyframe(obj, 'y', startF, y, 'linear');
+  setKeyframe(obj, 'color', startF, color, 'linear');
+  setKeyframe(obj, 'x', endF, endX, 'linear');
+  setKeyframe(obj, 'y', endF, y, 'linear');
+  setKeyframe(obj, 'color', endF, color, 'linear');
+  if (project.frameCount <= endF) project.frameCount = endF + 1;
+  renderCanvas();
+  renderTimeline();
+  updateKeyframeEditor();
 }
 
 function presetBlink() {
   const obj = getObject(selectedItemId);
   if (!obj) { showModal('Notice','Sélectionne un item.', false); return; }
   pushUndo();
-  // Blink = série de keyframes opacity en step (1/0/1/0...) sur 8 frames.
   const total = 8;
   for (let i = 0; i < total; i++) {
-    const f = currentFrameIndex + i;
-    const v = (i % 2 === 0) ? 1 : 0;
-    setKeyframe(obj, 'opacity', f, v, 'linear');
+    setKeyframe(obj, 'opacity', currentFrameIndex + i, i % 2 === 0 ? 1 : 0, 'linear');
   }
   const endF = currentFrameIndex + total - 1;
   if (project.frameCount <= endF) project.frameCount = endF + 1;
-  updateUI();
+  renderCanvas();
+  renderTimeline();
+  updateKeyframeEditor();
 }
 
 function presetFade(dir) {
   const obj = getObject(selectedItemId);
   if (!obj) { showModal('Notice','Sélectionne un item.', false); return; }
   pushUndo();
-  const total = 20;
   const startF = currentFrameIndex;
-  const endF = currentFrameIndex + total - 1;
+  const endF = currentFrameIndex + 19;
   if (dir === 'in') {
     setKeyframe(obj, 'opacity', startF, 0, 'linear');
     setKeyframe(obj, 'opacity', endF,   1, 'ease-in-out');
@@ -1824,7 +2058,9 @@ function presetFade(dir) {
     setKeyframe(obj, 'opacity', endF,   0, 'ease-in-out');
   }
   if (project.frameCount <= endF) project.frameCount = endF + 1;
-  updateUI();
+  renderCanvas();
+  renderTimeline();
+  updateKeyframeEditor();
 }
 
 // ---- Palette ----
@@ -1876,7 +2112,7 @@ async function loadProjectFromObject(obj) {
   renderPalette();
   undoStack = []; redoStack = [];
   updateUndoButtons();
-  selectedItemId = null;
+  clearSelection();
   updateUI();
 }
 
@@ -1915,7 +2151,7 @@ async function newProject() {
   currentFrameIndex = 0;
   undoStack = []; redoStack = [];
   imageCache.clear();
-  selectedItemId = null;
+  clearSelection();
   updateUndoButtons();
   renderPalette();
   updateUI();
@@ -2168,7 +2404,7 @@ function initShortcuts() {
       setKeyframe(copy, 'x', currentFrameIndex, curX + 2);
       setKeyframe(copy, 'y', currentFrameIndex, curY + 2);
       project.objects.push(copy);
-      selectedItemId = copy.id;
+      setSingleSelection(copy.id);
       renderCanvas(); updateTimelineThumb(currentFrameIndex); updateSelectionUI();
       return;
     }
@@ -2178,7 +2414,7 @@ function initShortcuts() {
     if (e.key === ' ') { e.preventDefault(); togglePlay(); return; }
     if (e.key === 'Escape') {
       if (document.fullscreenElement) return;
-      selectedItemId = null;
+      clearSelection();
       shapePreview = null;
       updateSelectionUI();
       renderCanvas();
@@ -2206,29 +2442,108 @@ function initShortcuts() {
 }
 
 function nudgeSelected(dx, dy) {
-  const obj = getObject(selectedItemId);
-  if (!obj) return;
+  if (selectedIds.size === 0) return;
   pushUndo();
-  if (obj.type === 'shape') {
-    const curX1 = getValueAt(obj.tracks.x1, currentFrameIndex, 0);
-    const curY1 = getValueAt(obj.tracks.y1, currentFrameIndex, 0);
-    const curX2 = getValueAt(obj.tracks.x2, currentFrameIndex, 0);
-    const curY2 = getValueAt(obj.tracks.y2, currentFrameIndex, 0);
-    updateObjectProp(obj, 'x1', curX1 + dx);
-    updateObjectProp(obj, 'y1', curY1 + dy);
-    updateObjectProp(obj, 'x2', curX2 + dx);
-    updateObjectProp(obj, 'y2', curY2 + dy);
-  } else {
-    const curX = getValueAt(obj.tracks.x, currentFrameIndex, 0);
-    const curY = getValueAt(obj.tracks.y, currentFrameIndex, 0);
-    updateObjectProp(obj, 'x', curX + dx);
-    updateObjectProp(obj, 'y', curY + dy);
+  for (const id of selectedIds) {
+    const obj = getObject(id);
+    if (!obj || obj.locked) continue;
+    if (obj.type === 'shape') {
+      const curX1 = getValueAt(obj.tracks.x1, currentFrameIndex, 0);
+      const curY1 = getValueAt(obj.tracks.y1, currentFrameIndex, 0);
+      const curX2 = getValueAt(obj.tracks.x2, currentFrameIndex, 0);
+      const curY2 = getValueAt(obj.tracks.y2, currentFrameIndex, 0);
+      updateObjectProp(obj, 'x1', curX1 + dx);
+      updateObjectProp(obj, 'y1', curY1 + dy);
+      updateObjectProp(obj, 'x2', curX2 + dx);
+      updateObjectProp(obj, 'y2', curY2 + dy);
+    } else {
+      const curX = getValueAt(obj.tracks.x, currentFrameIndex, 0);
+      const curY = getValueAt(obj.tracks.y, currentFrameIndex, 0);
+      updateObjectProp(obj, 'x', curX + dx);
+      updateObjectProp(obj, 'y', curY + dy);
+    }
   }
-  const it = currentItems().find(i => i.sourceId === obj.id);
-  if (it) populatePropertiesPanel(it);
+  const primary = getObject(selectedItemId);
+  if (primary) {
+    const it = currentItems().find(i => i.sourceId === primary.id);
+    if (it) populatePropertiesPanel(it);
+  }
   renderCanvas();
   updateTimelineThumb(currentFrameIndex);
   updateSelectionUI();
+}
+
+// ---- Group / Ungroup (Phase 4) ----
+function groupSelection() {
+  if (selectedIds.size < 2) {
+    showModal('Notice', 'Sélectionne au moins 2 objets pour les grouper.', false);
+    return;
+  }
+  pushUndo();
+  const ids = [...selectedIds];
+  // Trie les enfants dans leur ordre actuel dans objects[] pour préserver z-order relatif
+  const positions = ids.map(id => ({ id, idx: project.objects.findIndex(o => o.id === id) })).filter(p => p.idx !== -1);
+  positions.sort((a, b) => a.idx - b.idx);
+
+  // Position d'insertion = juste APRÈS l'enfant le plus en avant-plan, pour
+  // que dans le panel UI (top-first) le group apparaisse au-dessus de ses enfants.
+  const maxIdx = positions[positions.length - 1].idx;
+
+  // Crée un group avec position 0,0 (juste pour avoir des tracks valides).
+  const group = createObject('group', { name: 'Groupe' });
+  setKeyframe(group, 'x', currentFrameIndex, 0);
+  setKeyframe(group, 'y', currentFrameIndex, 0);
+  setKeyframe(group, 'opacity', currentFrameIndex, 1);
+
+  // Marque les enfants : parentId vers le group
+  for (const { id } of positions) {
+    const o = project.objects.find(x => x.id === id);
+    if (o) o.parentId = group.id;
+  }
+  // Insère le group à maxIdx + 1
+  project.objects.splice(maxIdx + 1, 0, group);
+
+  setSingleSelection(group.id);
+  renderCanvas();
+  updateLayersPanel();
+  updateSelectionUI();
+  updateTimelineThumb(currentFrameIndex);
+}
+
+function ungroupSelection() {
+  if (selectedIds.size === 0) return;
+  let didSomething = false;
+  pushUndo();
+  const idsSnapshot = [...selectedIds];
+  for (const id of idsSnapshot) {
+    const obj = getObject(id);
+    if (!obj) continue;
+    if (obj.type === 'group') {
+      // Restore tous les enfants à parentId=null et supprime le group
+      const children = project.objects.filter(o => o.parentId === id);
+      for (const c of children) c.parentId = null;
+      project.objects = project.objects.filter(o => o.id !== id);
+      removeFromSelection(id);
+      // Sélectionne les enfants à la place
+      children.forEach(c => addSelection(c.id));
+      didSomething = true;
+    } else if (obj.parentId) {
+      // Item enfant d'un group : juste détacher
+      obj.parentId = null;
+      didSomething = true;
+    }
+  }
+  if (!didSomething) {
+    // Rollback du pushUndo
+    if (undoStack.length > 0) undoStack.pop();
+    updateUndoButtons();
+    showModal('Notice', 'Rien à dégrouper dans la sélection.', false);
+    return;
+  }
+  renderCanvas();
+  updateLayersPanel();
+  updateSelectionUI();
+  updateTimelineThumb(currentFrameIndex);
 }
 
 // ---- PWA ----
@@ -2310,8 +2625,57 @@ function initExtras() {
   // Keyboard shortcuts
   initShortcuts();
 
+  // Layers panel toolbar (Phase 3)
+  if (btnLayerUp) btnLayerUp.addEventListener('click', () => {
+    if (!selectedItemId) return;
+    const idx = project.objects.findIndex(o => o.id === selectedItemId);
+    if (idx === -1 || idx === project.objects.length - 1) return;
+    pushUndo();
+    const [obj] = project.objects.splice(idx, 1);
+    project.objects.splice(idx + 1, 0, obj);
+    renderCanvas();
+    updateLayersPanel();
+    updateTimelineThumb(currentFrameIndex);
+  });
+  if (btnLayerDown) btnLayerDown.addEventListener('click', () => {
+    if (!selectedItemId) return;
+    const idx = project.objects.findIndex(o => o.id === selectedItemId);
+    if (idx <= 0) return;
+    pushUndo();
+    const [obj] = project.objects.splice(idx, 1);
+    project.objects.splice(idx - 1, 0, obj);
+    renderCanvas();
+    updateLayersPanel();
+    updateTimelineThumb(currentFrameIndex);
+  });
+  if (btnLayerDuplicate) btnLayerDuplicate.addEventListener('click', () => {
+    if (!selectedItemId) return;
+    const obj = getObject(selectedItemId);
+    if (!obj) return;
+    pushUndo();
+    const copy = JSON.parse(JSON.stringify(obj));
+    copy.id = generateId();
+    if (copy.tracks && copy.tracks.x) {
+      const curX = getValueAt(copy.tracks.x, currentFrameIndex, 0);
+      setKeyframe(copy, 'x', currentFrameIndex, curX + 2);
+    }
+    if (copy.tracks && copy.tracks.y) {
+      const curY = getValueAt(copy.tracks.y, currentFrameIndex, 0);
+      setKeyframe(copy, 'y', currentFrameIndex, curY + 2);
+    }
+    const origIdx = project.objects.findIndex(o => o.id === selectedItemId);
+    project.objects.splice(origIdx + 1, 0, copy);
+    setSingleSelection(copy.id);
+    renderCanvas();
+    updateSelectionUI();
+    updateTimelineThumb(currentFrameIndex);
+  });
+  if (btnLayerDelete) btnLayerDelete.addEventListener('click', deleteSelectedItem);
+  if (btnLayerGroup) btnLayerGroup.addEventListener('click', groupSelection);
+  if (btnLayerUngroup) btnLayerUngroup.addEventListener('click', ungroupSelection);
+
   // Bottom sheet (mobile UI)
-  initBottomSheet();
+  initBottomSheet({ onTabChange: tab => { if (tab === 'anim') updateKeyframeEditor(); } });
 
   // Autosave restore + register PWA
   tryRestoreAutosave();

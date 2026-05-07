@@ -175,6 +175,8 @@
   border-top: 1px solid rgba(255,255,255,0.06);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
+  min-width: 0;       /* empêche l'item de grille de s'étirer au-delà de la colonne */
+  overflow: hidden;   /* clip tout débordement résiduel */
 }
 .strip-controls {
   display: flex;

@@ -171,21 +171,73 @@ function materialize(obj, f) {
 }
 
 // Évalue toute la scène à la frame f. Retourne un tableau d'items plats,
-// dans l'ordre de project.objects[] (= z-order ascendant). Les groupes ne
-// sont pas encore supportés en Phase 1 (parentId est ignoré ici).
+// dans l'ordre de project.objects[] (= z-order ascendant). Les groupes
+// (type 'group', parentId sur enfants) appliquent leurs transforms (x, y,
+// opacity) en cascade sur leurs descendants.
 export function evaluateScene(project, f) {
+  const byId = new Map();
+  for (const o of project.objects) byId.set(o.id, o);
+
+  // Précalcule la chaîne de transform pour chaque objet (cumul via parents).
+  // Cache local pour ne pas refaire le travail si plusieurs objets partagent
+  // la même chaîne.
+  const xformCache = new Map(); // id -> { tx, ty, opacity, visible }
+  function getXform(obj) {
+    if (xformCache.has(obj.id)) return xformCache.get(obj.id);
+    const own = {
+      tx: getValueAt(obj.tracks.x, f, 0),
+      ty: getValueAt(obj.tracks.y, f, 0),
+      opacity: getValueAt(obj.tracks.opacity, f, 1),
+      visible: isVisibleAt(obj, f),
+    };
+    let acc = { ...own };
+    if (obj.parentId) {
+      const parent = byId.get(obj.parentId);
+      if (parent) {
+        const p = getXform(parent);
+        acc.tx += p.tx;
+        acc.ty += p.ty;
+        acc.opacity *= p.opacity;
+        acc.visible = acc.visible && p.visible;
+      }
+    }
+    xformCache.set(obj.id, acc);
+    return acc;
+  }
+
   const out = [];
   for (const obj of project.objects) {
     if (obj.type === 'group') continue;
-    if (!isVisibleAt(obj, f)) continue;
-    out.push(materialize(obj, f));
+    const x = getXform(obj);
+    if (!x.visible) continue;
+    const item = materialize(obj, f);
+    // Applique le transform parent : offset x/y, multiplie opacity.
+    // L'objet a déjà incorporé son propre x/y via materialize; on ajoute
+    // seulement la contribution des ancêtres.
+    let parentTx = 0, parentTy = 0, parentOp = 1;
+    if (obj.parentId) {
+      const parent = byId.get(obj.parentId);
+      if (parent) {
+        const p = getXform(parent);
+        parentTx = p.tx; parentTy = p.ty; parentOp = p.opacity;
+      }
+    }
+    if (parentTx || parentTy) {
+      if (item.x !== undefined) item.x += parentTx;
+      if (item.y !== undefined) item.y += parentTy;
+      if (item.x1 !== undefined) { item.x1 += parentTx; item.x2 += parentTx; }
+      if (item.y1 !== undefined) { item.y1 += parentTy; item.y2 += parentTy; }
+    }
+    if (parentOp !== 1) item.opacity = (item.opacity ?? 1) * parentOp;
+    out.push(item);
   }
   return out;
 }
 
 // --- Helpers pour les tools : crée un objet avec keyframes initiaux à f=0 ---
 export function makeTextObject({ text, font, x, y, size, color, f = 0 }) {
-  const obj = createObject('text', { static: { text, font } });
+  const name = text ? `"${text.slice(0, 16)}"` : 'Texte';
+  const obj = createObject('text', { name, static: { text, font } });
   setKeyframe(obj, 'x', f, x);
   setKeyframe(obj, 'y', f, y);
   setKeyframe(obj, 'size', f, size);
@@ -194,7 +246,7 @@ export function makeTextObject({ text, font, x, y, size, color, f = 0 }) {
 }
 
 export function makeImageObject({ imgId, x, y, scale, f = 0 }) {
-  const obj = createObject('image', { static: { imgId } });
+  const obj = createObject('image', { name: 'Image', static: { imgId } });
   setKeyframe(obj, 'x', f, x);
   setKeyframe(obj, 'y', f, y);
   setKeyframe(obj, 'scale', f, scale);
@@ -202,15 +254,21 @@ export function makeImageObject({ imgId, x, y, scale, f = 0 }) {
 }
 
 export function makeDrawingObject({ points, color, f = 0 }) {
-  const obj = createObject('drawing', { static: { points: points || [] } });
+  const obj = createObject('drawing', { name: 'Tracé', static: { points: points || [] } });
   setKeyframe(obj, 'x', f, 0);
   setKeyframe(obj, 'y', f, 0);
   setKeyframe(obj, 'color', f, color);
   return obj;
 }
 
+const SHAPE_NAMES = {
+  line: 'Ligne',
+  rect: 'Rectangle',
+  'rect-outline': 'Cadre',
+  ellipse: 'Ellipse',
+};
 export function makeShapeObject({ shape, x1, y1, x2, y2, color, f = 0 }) {
-  const obj = createObject('shape', { static: { shape } });
+  const obj = createObject('shape', { name: SHAPE_NAMES[shape] || 'Forme', static: { shape } });
   setKeyframe(obj, 'x1', f, x1);
   setKeyframe(obj, 'y1', f, y1);
   setKeyframe(obj, 'x2', f, x2);
