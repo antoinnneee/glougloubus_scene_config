@@ -25,6 +25,7 @@ import {
 } from './modules/scene.js';
 import { renderKeyframeEditor } from './modules/keyframe-editor.js';
 import { renderLayersPanel } from './modules/layers-panel.js';
+import { renderGlobalTimeline } from './modules/timeline-global.js';
 
 // --- DOM Elements ---
 const canvas = document.getElementById('led-canvas');
@@ -1128,6 +1129,8 @@ function updateSelectionUI() {
   }
   updateKeyframeEditor();
   updateLayersPanel();
+  // Re-render la timeline globale : les lanes dépendent de l'objet sélectionné
+  renderTimeline();
 }
 
 // --- Layers panel (Phase 3) ---
@@ -1687,78 +1690,74 @@ function renderCanvas() {
   }
 }
 
-function updateTimelineThumb(index) {
-  const thumbs = timelineContainer.querySelectorAll('.frame-thumb');
-  if (thumbs[index]) {
-    const thumbCtx = thumbs[index].getContext('2d');
-    drawFrameToContext(thumbCtx, index, false);
-  }
+// Phase 6 : la frame strip est devenue une vraie timeline scrubbable. Il n'y
+// a plus de thumbs à mettre à jour individuellement — un re-render complet
+// de la timeline suffit (ce qu'on faisait déjà à chaque changement majeur via
+// updateUI). Helper conservé pour ne pas casser les call sites existants.
+function updateTimelineThumb(_index) {
+  renderTimeline();
 }
 
 function renderTimeline() {
-  timelineContainer.innerHTML = '';
-  for (let index = 0; index < project.frameCount; index++) {
-    const container = document.createElement('div');
-    container.className = `frame-thumb-container ${index === currentFrameIndex ? 'active' : ''}`;
-    container.dataset.index = String(index);
-    container.draggable = true;
-
-    container.addEventListener('click', (e) => {
-      if (container._isDragging) return;
-      currentFrameIndex = index;
-      if (isPlaying) togglePlay();
-      updateUI();
-    });
-
-    // Drag-to-reorder (HTML5 drag & drop)
-    container.addEventListener('dragstart', (e) => {
-      container._isDragging = true;
-      container.classList.add('dragging');
-      e.dataTransfer.setData('text/plain', String(index));
-      e.dataTransfer.effectAllowed = 'move';
-    });
-    container.addEventListener('dragend', () => {
-      container._isDragging = false;
-      container.classList.remove('dragging');
-      document.querySelectorAll('.frame-thumb-container.drop-target').forEach(el => el.classList.remove('drop-target'));
-    });
-    container.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      container.classList.add('drop-target');
-    });
-    container.addEventListener('dragleave', () => container.classList.remove('drop-target'));
-    container.addEventListener('drop', (e) => {
-      e.preventDefault();
-      container.classList.remove('drop-target');
-      const from = parseInt(e.dataTransfer.getData('text/plain'), 10);
-      const to = index;
-      if (isNaN(from) || from === to) return;
-      // Réorganisation d'une frame = décalage des keyframes correspondants sur
-      // toutes les tracks. Implémentation simple : on shift les keyframes au
-      // niveau f des objets pour refléter le nouvel ordre. Phase 2/6 ré-affinera.
-      pushUndo();
-      shiftKeyframesForReorder(from, to);
-      if (currentFrameIndex === from) currentFrameIndex = to;
-      else if (from < currentFrameIndex && to >= currentFrameIndex) currentFrameIndex--;
-      else if (from > currentFrameIndex && to <= currentFrameIndex) currentFrameIndex++;
-      updateUI();
-    });
-
-    const thumbCanvas = document.createElement('canvas');
-    thumbCanvas.className = 'frame-thumb';
-    thumbCanvas.width = WIDTH;
-    thumbCanvas.height = HEIGHT;
-    drawFrameToContext(thumbCanvas.getContext('2d'), index, false);
-
-    const label = document.createElement('div');
-    label.className = 'frame-thumb-label';
-    label.innerText = `Frame ${index + 1}`;
-
-    container.appendChild(thumbCanvas);
-    container.appendChild(label);
-    timelineContainer.appendChild(container);
-  }
+  if (!timelineContainer) return;
+  const selectedObj = getObject(selectedItemId);
+  renderGlobalTimeline(timelineContainer, {
+    project,
+    currentFrame: currentFrameIndex,
+    selectedObj,
+    callbacks: {
+      onSeek(f) {
+        const target = Math.max(0, Math.min(project.frameCount - 1, f));
+        if (target === currentFrameIndex) return;
+        currentFrameIndex = target;
+        if (isPlaying) togglePlay();
+        renderCanvas();
+        renderTimeline();
+        updateKeyframeEditor();
+      },
+      onAddKf(prop, f) {
+        const obj = getObject(selectedItemId);
+        if (!obj) return;
+        // Valeur par défaut au moment t = valeur courante de la track au temps f
+        const cur = getValueAt(obj.tracks[prop], f, undefined);
+        // Fallback : la valeur visible à f côté rendu (pour size/scale/etc.)
+        let v = cur;
+        if (v === undefined) {
+          const it = currentItems().find(i => i.sourceId === obj.id);
+          v = it && it[prop] !== undefined ? it[prop] : 0;
+        }
+        pushUndo();
+        setKeyframe(obj, prop, f, v);
+        renderCanvas();
+        renderTimeline();
+        updateKeyframeEditor();
+      },
+      onMoveKf(prop, oldF, newF) {
+        const obj = getObject(selectedItemId);
+        if (!obj) return;
+        const track = obj.tracks[prop];
+        if (!track) return;
+        const kf = track.find(k => k.f === oldF);
+        if (!kf) return;
+        const { v, easing } = kf;
+        pushUndo();
+        removeKeyframe(obj, prop, oldF);
+        setKeyframe(obj, prop, newF, v, easing);
+        renderCanvas();
+        renderTimeline();
+        updateKeyframeEditor();
+      },
+      onRemoveKf(prop, f) {
+        const obj = getObject(selectedItemId);
+        if (!obj) return;
+        pushUndo();
+        removeKeyframe(obj, prop, f);
+        renderCanvas();
+        renderTimeline();
+        updateKeyframeEditor();
+      },
+    },
+  });
 }
 
 // Quand une frame est déplacée dans la timeline, on remappe les valeurs f des
@@ -1867,8 +1866,12 @@ function play() {
   playInterval = setInterval(() => {
     currentFrameIndex = (currentFrameIndex + 1) % project.frameCount;
     renderCanvas();
-    const thumbs = document.querySelectorAll('.frame-thumb-container');
-    thumbs.forEach((t, i) => t.classList.toggle('active', i === currentFrameIndex));
+    // Maj rapide du playhead sans re-render complet (= pas de DOM rebuild)
+    const ph = timelineContainer && timelineContainer.querySelector('.gtl-playhead');
+    if (ph) {
+      const pct = project.frameCount <= 1 ? 0 : (currentFrameIndex / (project.frameCount - 1)) * 100;
+      ph.style.left = `${pct}%`;
+    }
   }, 1000 / project.fps);
 }
 
