@@ -12,6 +12,47 @@ const TRACKS_BY_TYPE = {
   group:   ['x', 'y', 'opacity'],
 };
 
+const EASINGS = ['linear', 'ease-in', 'ease-out', 'ease-in-out', 'bounce'];
+
+// --- Context menu (réutilisé pour easing + delete) ---
+
+let _activeMenu = null;
+function closeMenu() {
+  if (_activeMenu) { _activeMenu.remove(); _activeMenu = null; }
+}
+document.addEventListener('click', closeMenu);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeMenu(); });
+
+function showMenu(anchorEl, items) {
+  closeMenu();
+  const menu = document.createElement('div');
+  menu.className = 'kf-menu';
+  for (const item of items) {
+    if (item.separator) {
+      const sep = document.createElement('div');
+      sep.className = 'kf-menu-sep';
+      sep.textContent = item.label || '';
+      menu.appendChild(sep);
+    } else {
+      const btn = document.createElement('button');
+      btn.className = 'kf-menu-item' + (item.danger ? ' danger' : '');
+      btn.textContent = item.label;
+      btn.addEventListener('click', e => { e.stopPropagation(); closeMenu(); item.action(); });
+      menu.appendChild(btn);
+    }
+  }
+  document.body.appendChild(menu);
+  _activeMenu = menu;
+  const rect = anchorEl.getBoundingClientRect();
+  const mw = 180;
+  let left = rect.left;
+  let top = rect.bottom + 6;
+  if (left + mw > window.innerWidth) left = window.innerWidth - mw - 8;
+  if (top + 280 > window.innerHeight) top = rect.top - 280;
+  menu.style.left = `${left}px`;
+  menu.style.top = `${Math.max(8, top)}px`;
+}
+
 function pct(f, total) {
   if (total <= 1) return '0%';
   return `${(f / (total - 1)) * 100}%`;
@@ -197,8 +238,20 @@ function attachLaneInteraction(lane, prop, frameCount, callbacks) {
 function buildDot(prop, kf, frameCount, laneEl, callbacks) {
   const dot = document.createElement('div');
   dot.className = 'gtl-dot';
+  dot.dataset.easing = kf.easing || 'linear';
   dot.style.left = pct(kf.f, frameCount);
-  dot.title = `f${kf.f} · ${kf.easing || 'linear'} (clic = seek, drag = déplacer, clic-droit = supprimer)`;
+  dot.title = `f${kf.f} · ${kf.easing || 'linear'} (drag = déplacer, long-press / clic-droit = options)`;
+
+  function openDotMenu() {
+    showMenu(dot, [
+      { label: '🗑 Supprimer', danger: true, action: () => callbacks.onRemoveKf(prop, kf.f) },
+      { label: 'Easing', separator: true },
+      ...EASINGS.map(e => ({
+        label: ((kf.easing || 'linear') === e ? '✓ ' : '    ') + e,
+        action: () => callbacks.onSetEasing && callbacks.onSetEasing(prop, kf.f, e),
+      })),
+    ]);
+  }
 
   dot.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
@@ -206,11 +259,20 @@ function buildDot(prop, kf, frameCount, laneEl, callbacks) {
     dot.setPointerCapture(e.pointerId);
 
     let dragging = false;
+    let menuShown = false;
     let pendingF = kf.f;
     const startClientX = e.clientX;
 
+    const longPressTimer = setTimeout(() => {
+      menuShown = true;
+      openDotMenu();
+    }, 500);
+
     const onMove = (ev) => {
-      if (!dragging && Math.abs(ev.clientX - startClientX) > 4) dragging = true;
+      if (!dragging && Math.abs(ev.clientX - startClientX) > 4) {
+        clearTimeout(longPressTimer);
+        dragging = true;
+      }
       if (!dragging) return;
       const rect = laneEl.getBoundingClientRect();
       const f = Math.round(((ev.clientX - rect.left) / rect.width) * (frameCount - 1));
@@ -218,9 +280,11 @@ function buildDot(prop, kf, frameCount, laneEl, callbacks) {
       dot.style.left = pct(pendingF, frameCount);
     };
     const onUp = () => {
+      clearTimeout(longPressTimer);
       dot.removeEventListener('pointermove', onMove);
       dot.removeEventListener('pointerup', onUp);
       dot.removeEventListener('pointercancel', onUp);
+      if (menuShown) return;
       if (dragging && pendingF !== kf.f) {
         callbacks.onMoveKf(prop, kf.f, pendingF);
       } else if (!dragging) {
@@ -234,7 +298,7 @@ function buildDot(prop, kf, frameCount, laneEl, callbacks) {
 
   dot.addEventListener('contextmenu', (e) => {
     e.preventDefault();
-    callbacks.onRemoveKf(prop, kf.f);
+    openDotMenu();
   });
 
   return dot;

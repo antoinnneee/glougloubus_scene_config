@@ -331,8 +331,41 @@
   touch-action: none;
   z-index: 2;
 }
-.gtl-dot:hover { background: var(--accent-color); }
+/* Code couleur par easing — repère visuel rapide sans avoir à ouvrir le menu.
+   Linear reste blanc (défaut), les autres prennent une teinte. */
+.gtl-dot[data-easing="ease-in"]      { background: #fbbf24; } /* amber */
+.gtl-dot[data-easing="ease-out"]     { background: #34d399; } /* emerald */
+.gtl-dot[data-easing="ease-in-out"]  { background: #a78bfa; } /* violet */
+.gtl-dot[data-easing="bounce"]       { background: #f472b6; } /* pink */
+.gtl-dot:hover {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 1px;
+}
 .gtl-dot:active { cursor: grabbing; transform: translate(-50%, -50%) scale(1.25); }
+
+/* Légende easings dans le hint de la timeline */
+.gtl-legend {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem;
+  margin-top: 0.25rem;
+  font-size: 0.7rem;
+}
+.gtl-legend-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 0.2rem;
+  border: 1px solid rgba(0, 0, 0, 0.4);
+  vertical-align: middle;
+  background: var(--text-main);
+}
+.gtl-legend-dot[data-easing="ease-in"]      { background: #fbbf24; }
+.gtl-legend-dot[data-easing="ease-out"]     { background: #34d399; }
+.gtl-legend-dot[data-easing="ease-in-out"]  { background: #a78bfa; }
+.gtl-legend-dot[data-easing="bounce"]       { background: #f472b6; }
 
 /* ============== PREVIEW (FULLSCREEN) ============== */
 body.preview-mode .topbar,

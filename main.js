@@ -1756,6 +1756,19 @@ function renderTimeline() {
         renderTimeline();
         updateKeyframeEditor();
       },
+      onSetEasing(prop, f, easing) {
+        const obj = getObject(selectedItemId);
+        if (!obj) return;
+        const track = obj.tracks[prop];
+        if (!track) return;
+        const kf = track.find(k => k.f === f);
+        if (!kf) return;
+        pushUndo();
+        kf.easing = easing;
+        renderCanvas();
+        renderTimeline();
+        updateKeyframeEditor();
+      },
     },
   });
 }
