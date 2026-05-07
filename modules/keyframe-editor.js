@@ -15,10 +15,13 @@ const EASINGS = ['linear', 'ease-in', 'ease-out', 'ease-in-out', 'bounce'];
 let _activeMenu = null;
 
 function closeMenu() {
-  if (_activeMenu) { _activeMenu.remove(); _activeMenu = null; }
+  if (_activeMenu) {
+    if (_activeMenu._cleanup) _activeMenu._cleanup();
+    _activeMenu.remove();
+    _activeMenu = null;
+  }
 }
 
-document.addEventListener('click', closeMenu);
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeMenu(); });
 
 function showMenu(anchorEl, items) {
@@ -52,6 +55,19 @@ function showMenu(anchorEl, items) {
   if (top + 240 > window.innerHeight) top = rect.top - 240;
   menu.style.left = `${left}px`;
   menu.style.top = `${Math.max(8, top)}px`;
+
+  // Outside-tap close différé d'un frame pour éviter que le pointerup du
+  // long-press qui vient d'ouvrir le menu ne le referme aussitôt.
+  requestAnimationFrame(() => {
+    if (_activeMenu !== menu) return;
+    const onOutside = (e) => {
+      if (!_activeMenu) return;
+      if (_activeMenu.contains(e.target)) return;
+      closeMenu();
+    };
+    document.addEventListener('pointerdown', onOutside, true);
+    menu._cleanup = () => document.removeEventListener('pointerdown', onOutside, true);
+  });
 }
 
 // --- Public API ---
