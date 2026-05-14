@@ -71,20 +71,46 @@ const imgX = document.getElementById('img-x');
 const imgY = document.getElementById('img-y');
 const imgScale = document.getElementById('img-scale');
 const btnApplyImage = document.getElementById('btn-apply-image');
+const stockImagesEl = document.getElementById('stock-images');
+
+// Images stock : tout fichier image déposé dans /asset est auto-découvert par
+// Vite au build (URLs hashées) et servi en dev. Ajouter une image au dossier
+// suffit pour la voir apparaître dans la galerie de l'onglet Image.
+const stockImageModules = import.meta.glob('./asset/*.{png,jpg,jpeg,gif,webp}', {
+  eager: true, query: '?url', import: 'default',
+});
 
 const textInput = document.getElementById('text-input');
-const textSize = document.getElementById('text-size');
-const textX = document.getElementById('text-x');
-const textY = document.getElementById('text-y');
 const textFont = document.getElementById('text-font');
 const btnApplyText = document.getElementById('btn-apply-text');
 
 const selectionTools = document.getElementById('selection-tools');
 const btnDeleteItem = document.getElementById('btn-delete-item');
 
-// Pacman : panneau de propriétés (taille du rayon)
-const pacmanTools = document.getElementById('pacman-tools');
-const pacmanSize = document.getElementById('pacman-size');
+// Onglet Props : slider de taille unifié (texte = size, image = scale,
+// pacman = size). Slider logarithmique → plus de résolution dans les bas.
+const sizeTools = document.getElementById('size-tools');
+const sizeTitle = document.getElementById('size-title');
+const sizeSlider = document.getElementById('size-slider');
+const sizeValue = document.getElementById('size-value');
+
+// Config par type : prop ciblée + bornes du slider. step = pas du champ numérique.
+const SIZE_CONFIG = {
+  text:   { prop: 'size',  min: 1,    max: 200, step: 1,    label: 'Taille (px)' },
+  image:  { prop: 'scale', min: 0.02, max: 8,   step: 0.01, label: 'Échelle' },
+  pacman: { prop: 'size',  min: 1,    max: 32,  step: 1,    label: 'Taille (rayon)' },
+};
+// Mapping logarithmique position[0..1] <-> valeur, pour densifier les bas.
+function sizeSliderToValue(cfg, t) {
+  return cfg.min * Math.pow(cfg.max / cfg.min, Math.max(0, Math.min(1, t)));
+}
+function sizeValueToSlider(cfg, v) {
+  const clamped = Math.max(cfg.min, Math.min(cfg.max, v));
+  return Math.log(clamped / cfg.min) / Math.log(cfg.max / cfg.min);
+}
+function formatSizeValue(cfg, v) {
+  return cfg.step >= 1 ? String(Math.round(v)) : v.toFixed(2);
+}
 
 const btnTogglePencil = document.getElementById('btn-toggle-pencil');
 const pencilColor = document.getElementById('pencil-color');
@@ -281,12 +307,18 @@ let shapePreview = null;
 // Preview Pacman en cours (drag départ→arrivée avec l'outil pacman)
 let pacmanPreview = null;
 
-// Pinch multi-touch sur canvas : resize item ou zoom vue
+// Pinch multi-touch sur canvas : zoom de la vue
 const canvasPointers = new Map();   // pointerId -> { x, y }
 let pinchStartDist = null;
 let pinchStartItem = null;          // snapshot {size, scale, x, y}
 let pinchStartZoom = null;
-let pinchMode = null;               // 'resize' | 'zoom'
+let pinchMode = null;               // 'zoom'
+
+// Type du dernier pointeur utilisé sur le canvas ('touch' | 'mouse' | 'pen').
+// Sur tactile : pas de poignées de resize (elles voleraient le drag de
+// déplacement et le pinch sert au zoom) — on redimensionne via le slider Props.
+let lastPointerType = window.matchMedia('(pointer: coarse)').matches ? 'touch' : 'mouse';
+function isTouchInteraction() { return lastPointerType === 'touch'; }
 
 // Resize State
 let isResizing = false;
@@ -415,6 +447,7 @@ function init() {
   btnApplyText.innerText = "Add Text";
   btnApplyImage.addEventListener('click', applyImageTool);
   btnApplyText.addEventListener('click', applyTextTool);
+  renderStockImages();
   btnConnectBle.addEventListener('click', connectBle);
   btnStreamBle.addEventListener('click', streamToBle);
 
@@ -456,12 +489,22 @@ function init() {
   
   // Property changes live update the selected item.
   // pushUndo au premier focus = 1 point d'undo par session d'édition (pas par frappe).
-  const propertyInputs = [textInput, textSize, textX, textY, textFont, imgX, imgY, imgScale, pacmanSize];
+  const propertyInputs = [textInput, textFont, imgX, imgY, imgScale];
   propertyInputs.forEach(el => {
     if (!el) return;
     el.addEventListener('input', updateSelectedItemProperties);
     el.addEventListener('focus', () => { if (selectedItemId) pushUndo(); });
   });
+
+  // Slider de taille unifié (onglet Props).
+  if (sizeSlider) {
+    sizeSlider.addEventListener('focus', () => { if (selectedItemId) pushUndo(); });
+    sizeSlider.addEventListener('input', () => applySizeFromControl('slider'));
+  }
+  if (sizeValue) {
+    sizeValue.addEventListener('focus', () => { if (selectedItemId) pushUndo(); });
+    sizeValue.addEventListener('input', () => applySizeFromControl('value'));
+  }
 
   // pencilColor = couleur unifiée : met à jour l'item sélectionné (texte, dessin, shape) en live
   if (pencilColor) {
@@ -482,6 +525,24 @@ function init() {
 
   // Init des fonctionnalités additionnelles
   initExtras();
+  initStageFit();
+}
+
+// Le canvas LED doit TOUJOURS tenir dans l'espace dispo : quand la sheet
+// s'ouvre, le wrapper se réduit fortement. On pilote --stage-h sur la hauteur
+// réelle du wrapper → le canvas se redimensionne pour rester visible, au lieu
+// de déborder et d'être rogné par le `overflow:hidden` du wrapper.
+function initStageFit() {
+  const wrap = document.getElementById('canvas-wrapper');
+  if (!wrap || typeof ResizeObserver === 'undefined') return;
+  const apply = () => {
+    // -12 : padding(4px) + bordure(2px), des deux côtés, du .canvas-container.
+    const h = Math.max(8, wrap.clientHeight - 12);
+    document.documentElement.style.setProperty('--stage-h', h + 'px');
+    renderCanvas();
+  };
+  new ResizeObserver(apply).observe(wrap);
+  apply();
 }
 
 // --- Interaction Logic ---
@@ -526,10 +587,12 @@ function applySnap(v) {
 
 function handlePointerDown(e) {
   if (isPlaying) return;
+  lastPointerType = e.pointerType || 'mouse';
   canvas.setPointerCapture(e.pointerId);
   canvasPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
-  // Deuxième pointer : bascule en mode pinch (resize item ou zoom vue)
+  // Deuxième pointer : pinch = ZOOM de la vue (toujours). Le redimensionnement
+  // d'un item se fait via les poignées (souris) ou le slider de l'onglet Props.
   if (canvasPointers.size === 2) {
     // Annule toute interaction single-finger en cours
     isDragging = false;
@@ -548,22 +611,8 @@ function handlePointerDown(e) {
 
     const pts = [...canvasPointers.values()];
     pinchStartDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-
-    const selObj = getObject(selectedItemId);
-    if (selObj && (selObj.type === 'text' || selObj.type === 'image' || selObj.type === 'pacman')) {
-      pinchMode = 'resize';
-      pushUndo();
-      const it = currentItems().find(i => i.sourceId === selObj.id);
-      pinchStartItem = {
-        size: it && it.size != null ? it.size : 16,
-        scale: it && it.scale != null ? it.scale : 1,
-        x: it ? it.x : 0,
-        y: it ? it.y : 0
-      };
-    } else {
-      pinchMode = 'zoom';
-      pinchStartZoom = viewZoom;
-    }
+    pinchMode = 'zoom';
+    pinchStartZoom = viewZoom;
     renderCanvas();
     return;
   }
@@ -646,12 +695,19 @@ function handlePointerDown(e) {
     }
   }
 
-  // Resize handles : seulement si rotation = 0 (handles dessinés uniquement dans ce cas)
-  if (selectedItemId) {
+  // Resize handles : souris/stylet uniquement (sur tactile on déplace en
+  // glissant l'item et on redimensionne via le slider Props) et rotation = 0.
+  if (selectedItemId && !isTouchInteraction()) {
     const it = currentItems().find(i => i.sourceId === selectedItemId);
     if (it && !it.rotation && (it.type === 'text' || it.type === 'image' || it.type === 'pacman')) {
       const bounds = getItemBounds(it);
-      const hHit = getResizeHitRadius();
+      // Le rayon de prise est plafonné à 1/3 de la plus petite dimension du
+      // bbox : sur un petit item, ça réserve une zone centrale pour le drag de
+      // déplacement au lieu que les 4 poignées avalent tout le clic.
+      const hHit = Math.min(
+        getResizeHitRadius(),
+        Math.min(bounds.width, bounds.height) * 0.33
+      );
       const isHit = (hx, hy) => Math.abs(x - hx) <= hHit && Math.abs(y - hy) <= hHit;
 
       if (isHit(bounds.x + bounds.width, bounds.y + bounds.height)) resizeHandle = 'br';
@@ -829,35 +885,14 @@ function handlePointerMove(e) {
     canvasPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   }
 
-  // Pinch : resize item sélectionné ou zoom vue
+  // Pinch : zoom de la vue
   if (pinchMode && canvasPointers.size >= 2) {
     const pts = [...canvasPointers.values()];
     const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
     const ratio = dist / (pinchStartDist || dist);
-
-    if (pinchMode === 'resize') {
-      const obj = getObject(selectedItemId);
-      if (obj && pinchStartItem) {
-        if (obj.type === 'text') {
-          const newSize = Math.max(1, Math.round(pinchStartItem.size * ratio));
-          updateObjectProp(obj, 'size', newSize);
-          if (textSize) textSize.value = newSize;
-        } else if (obj.type === 'image') {
-          const newScale = Math.max(0.01, pinchStartItem.scale * ratio);
-          updateObjectProp(obj, 'scale', newScale);
-          if (imgScale) imgScale.value = newScale.toFixed(2);
-        } else if (obj.type === 'pacman') {
-          const newR = Math.max(1, Math.min(32, Math.round((pinchStartItem.size || 6) * ratio)));
-          updateObjectProp(obj, 'size', newR);
-          if (pacmanSize) pacmanSize.value = newR;
-        }
-        renderCanvas();
-      }
-    } else if (pinchMode === 'zoom') {
-      const cx = (pts[0].x + pts[1].x) / 2;
-      const cy = (pts[0].y + pts[1].y) / 2;
-      setZoom((pinchStartZoom || viewZoom) * ratio, cx, cy);
-    }
+    const cx = (pts[0].x + pts[1].x) / 2;
+    const cy = (pts[0].y + pts[1].y) / 2;
+    setZoom((pinchStartZoom || viewZoom) * ratio, cx, cy);
     return;
   }
 
@@ -925,9 +960,6 @@ function handlePointerMove(e) {
           updateObjectProp(obj, 'size', newSize);
           updateObjectProp(obj, 'x', newX);
           updateObjectProp(obj, 'y', newY);
-          textSize.value = newSize;
-          textX.value = newX;
-          textY.value = newY;
        } else if (obj.type === 'image') {
           const newScale = Math.max(0.01, resizeStartScale * (currentWidth / Math.max(1, resizeStartWidth)));
           updateObjectProp(obj, 'scale', newScale);
@@ -943,8 +975,9 @@ function handlePointerMove(e) {
             Math.max(Math.abs(x - resizeItemStartX), Math.abs(y - resizeItemStartY))
           )));
           updateObjectProp(obj, 'size', newR);
-          if (pacmanSize) pacmanSize.value = newR;
        }
+       // Garde le slider de taille (onglet Props) synchro pendant le drag.
+       syncSizeControl(currentItems().find(i => i.sourceId === selectedItemId));
 
        renderCanvas();
     }
@@ -1005,9 +1038,9 @@ function handlePointerMove(e) {
       const newY = applySnap(start.y + dy);
       updateObjectProp(obj, 'x', newX);
       updateObjectProp(obj, 'y', newY);
-      if (id === selectedItemId) {
-        if (obj.type === 'text')  { textX.value = newX; textY.value = newY; }
-        if (obj.type === 'image') { imgX.value = newX;  imgY.value = newY; }
+      if (id === selectedItemId && obj.type === 'image') {
+        imgX.value = newX;
+        imgY.value = newY;
       }
     } else if (obj.type === 'shape') {
       updateObjectProp(obj, 'x1', Math.round(start.x1 + dxSnap));
@@ -1215,19 +1248,16 @@ function populatePropertiesPanel(item) {
   if (item.type === 'text') {
     textInput.value = item.text;
     pencilColor.value = item.color;
-    textSize.value = item.size;
-    textX.value = item.x;
-    textY.value = item.y;
     textFont.value = item.font || '"JetBrains Mono", monospace';
   } else if (item.type === 'image') {
     imgX.value = item.x;
     imgY.value = item.y;
     imgScale.value = item.scale;
-  } else if (item.type === 'pacman') {
-    if (pacmanSize) pacmanSize.value = Math.round(item.size || 6);
   } else if (item.type === 'drawing' || item.type === 'shape') {
     if (item.color) pencilColor.value = item.color;
   }
+  // La taille (texte/image/pacman) est gérée par le slider unifié de l'onglet
+  // Props, synchronisé via syncSizeControl() depuis updateSelectionUI().
 }
 
 function updateSelectedItemProperties(e) {
@@ -1237,19 +1267,56 @@ function updateSelectedItemProperties(e) {
   if (obj.type === 'text') {
     updateObjectProp(obj, 'text',  textInput.value);
     updateObjectProp(obj, 'color', pencilColor.value);
-    updateObjectProp(obj, 'size',  parseInt(textSize.value) || 16);
-    updateObjectProp(obj, 'x',     parseInt(textX.value) || 0);
-    updateObjectProp(obj, 'y',     parseInt(textY.value) || 16);
     updateObjectProp(obj, 'font',  textFont.value);
   } else if (obj.type === 'image') {
     updateObjectProp(obj, 'x',     parseInt(imgX.value) || 0);
     updateObjectProp(obj, 'y',     parseInt(imgY.value) || 0);
     updateObjectProp(obj, 'scale', parseFloat(imgScale.value) || 1.0);
-  } else if (obj.type === 'pacman') {
-    const s = Math.max(1, Math.min(32, parseInt(pacmanSize.value) || 6));
-    updateObjectProp(obj, 'size', s);
   }
 
+  renderCanvas();
+  updateTimelineThumb(currentFrameIndex);
+}
+
+// --- Slider de taille unifié (onglet Props) ---
+
+// Affiche/synchronise le slider selon l'item sélectionné (null = masque).
+function syncSizeControl(item) {
+  if (!sizeTools) return;
+  const cfg = item && SIZE_CONFIG[item.type];
+  if (!cfg) { sizeTools.hidden = true; return; }
+  sizeTools.hidden = false;
+  const v = item[cfg.prop] != null ? item[cfg.prop] : cfg.min;
+  if (sizeTitle) sizeTitle.textContent = cfg.label;
+  if (sizeValue && document.activeElement !== sizeValue) {
+    sizeValue.step = cfg.step;
+    sizeValue.min = cfg.min;
+    sizeValue.max = cfg.max;
+    sizeValue.value = formatSizeValue(cfg, v);
+  }
+  if (sizeSlider && document.activeElement !== sizeSlider) {
+    sizeSlider.value = String(sizeValueToSlider(cfg, v));
+  }
+}
+
+// Applique la taille depuis le slider ou le champ numérique vers l'objet.
+function applySizeFromControl(source) {
+  const obj = getObject(selectedItemId);
+  if (!obj) return;
+  const cfg = SIZE_CONFIG[obj.type];
+  if (!cfg) return;
+  let value;
+  if (source === 'slider') {
+    value = sizeSliderToValue(cfg, parseFloat(sizeSlider.value));
+    if (cfg.step >= 1) value = Math.round(value);
+    if (sizeValue) sizeValue.value = formatSizeValue(cfg, value);
+  } else {
+    value = parseFloat(sizeValue.value);
+    if (!isFinite(value)) return;
+    value = Math.max(cfg.min, Math.min(cfg.max, value));
+    if (sizeSlider) sizeSlider.value = String(sizeValueToSlider(cfg, value));
+  }
+  updateObjectProp(obj, cfg.prop, value);
   renderCanvas();
   updateTimelineThumb(currentFrameIndex);
 }
@@ -1258,23 +1325,16 @@ function updateSelectionUI() {
   const has = !!selectedItemId;
   selectionTools.hidden = !has;
   if (btnDeleteSelected) btnDeleteSelected.disabled = !has;
-  let selType = null;
-  if (has) {
-    const it = currentItems().find(i => i.sourceId === selectedItemId);
-    if (it) {
-      selType = it.type;
-      sheetAutoOpen(it);
-      // Sync rotation input avec l'objet courant
-      if (propRotation && document.activeElement !== propRotation) {
-        propRotation.value = (Math.round((it.rotation || 0) * 10) / 10).toString();
-      }
-      // Panneau Pacman : visible + synchronisé seulement pour un Pacman
-      if (it.type === 'pacman' && pacmanSize && document.activeElement !== pacmanSize) {
-        pacmanSize.value = Math.round(it.size || 6);
-      }
+  const it = has ? currentItems().find(i => i.sourceId === selectedItemId) : null;
+  if (it) {
+    sheetAutoOpen(it);
+    // Sync rotation input avec l'objet courant
+    if (propRotation && document.activeElement !== propRotation) {
+      propRotation.value = (Math.round((it.rotation || 0) * 10) / 10).toString();
     }
   }
-  if (pacmanTools) pacmanTools.hidden = selType !== 'pacman';
+  // Slider de taille unifié (texte / image / pacman) — masqué sinon
+  syncSizeControl(it);
   updateKeyframeEditor();
   updateLayersPanel();
   // Re-render la timeline globale : les lanes dépendent de l'objet sélectionné
@@ -1971,7 +2031,12 @@ function renderCanvas() {
 
       // Handles uniquement si sélection unique
       if (singleSelection) {
-        const hSize = 18 * bufferPerCss;
+        // Taille du carré-poignée plafonnée à la moitié du plus petit côté du
+        // bbox (à l'écran) → sur un petit item les 4 poignées ne se recouvrent
+        // pas et laissent une zone centrale visible.
+        const bboxScreenW = Math.hypot(corners[1].x - corners[0].x, corners[1].y - corners[0].y);
+        const bboxScreenH = Math.hypot(corners[2].x - corners[1].x, corners[2].y - corners[1].y);
+        const hSize = Math.min(18 * bufferPerCss, Math.min(bboxScreenW, bboxScreenH) * 0.5);
         const drawHandle = (hx, hy) => {
           ctx.fillStyle = '#ffffff';
           ctx.strokeStyle = '#000000';
@@ -1980,11 +2045,12 @@ function renderCanvas() {
           ctx.strokeRect(hx - hSize/2, hy - hSize/2, hSize, hSize);
         };
 
-        // Resize handles : pour text/image/pacman et seulement si rotation = 0
-        // (resize sur item rotaté nécessiterait une logique de delta dans le repère
-        // local, hors scope ici).
+        // Resize handles : souris/stylet uniquement, pour text/image/pacman et
+        // seulement si rotation = 0 (resize sur item rotaté nécessiterait une
+        // logique de delta dans le repère local, hors scope ici).
         const noRotation = !it.rotation;
-        if (noRotation && (it.type === 'text' || it.type === 'image' || it.type === 'pacman')) {
+        if (noRotation && !isTouchInteraction() &&
+            (it.type === 'text' || it.type === 'image' || it.type === 'pacman')) {
           drawHandle(corners[0].x, corners[0].y); // tl
           drawHandle(corners[1].x, corners[1].y); // tr
           drawHandle(corners[2].x, corners[2].y); // br
@@ -2291,15 +2357,67 @@ function loadImageWithOptions(dataUrl, x, y, scale) {
   img.src = dataUrl;
 }
 
+// --- Galerie d'images stock (dossier /asset, auto-découvert par Vite) ---
+
+// Remplit la grille de vignettes. Idempotent : appelé une fois à l'init.
+function renderStockImages() {
+  if (!stockImagesEl) return;
+  stockImagesEl.innerHTML = '';
+  const entries = Object.entries(stockImageModules);
+  if (entries.length === 0) {
+    const hint = document.createElement('p');
+    hint.className = 'hint';
+    hint.textContent = 'Aucune image dans le dossier asset/.';
+    stockImagesEl.appendChild(hint);
+    return;
+  }
+  for (const [path, url] of entries) {
+    const name = path.split('/').pop();
+    const btn = document.createElement('button');
+    btn.className = 'stock-thumb';
+    btn.title = name;
+    btn.setAttribute('aria-label', `Ajouter ${name}`);
+    const im = document.createElement('img');
+    im.src = url;
+    im.alt = name;
+    im.loading = 'lazy';
+    btn.appendChild(im);
+    btn.addEventListener('click', () => addStockImage(url, name));
+    stockImagesEl.appendChild(btn);
+  }
+}
+
+// Ajoute une image stock à la scène. On la convertit en dataURL (comme un
+// upload) pour que le projet reste autonome à la sauvegarde — l'URL Vite est
+// hashée et changerait au prochain build.
+async function addStockImage(url, name) {
+  try {
+    const res = await fetch(url);
+    const blob = await res.blob();
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const x = parseInt(imgX.value) || 0;
+      const y = parseInt(imgY.value) || 0;
+      const scale = parseFloat(imgScale.value) || 1.0;
+      loadImageWithOptions(e.target.result, x, y, scale);
+    };
+    reader.readAsDataURL(blob);
+  } catch (err) {
+    showModal('Erreur', `Impossible de charger l'image stock « ${name || ''} ».`, false);
+  }
+}
+
 function applyTextTool() {
   const text = textInput.value;
   if (!text) return;
 
   pushUndo();
   const color = pencilColor.value;
-  const size = parseInt(textSize.value) || 16;
-  const x = parseInt(textX.value) || 0;
-  const y = parseInt(textY.value) || 16;
+  // Taille et position par défaut : on les ajuste ensuite via le slider Props
+  // et en glissant le texte sur le canvas.
+  const size = 16;
+  const x = 2;
+  const y = Math.round(HEIGHT / 2);
   const font = textFont.value;
   pushRecentColor(color);
 

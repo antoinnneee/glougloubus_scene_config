@@ -8,7 +8,10 @@
   grid-template-rows: var(--topbar-h) var(--dock-h) 1fr;
   height: 100dvh;
   padding-top: var(--safe-top);
-  /* Reserve space for the sticky sheet handle (visible when sheet is closed/peek) */
+  /* padding-bottom = hauteur réelle de la sheet, recopiée en continu par le
+     ResizeObserver de sheet.js (initBottomSheet). Valeur initiale = la sheet en
+     peek. Pas de transition CSS ici : le padding suit la transition de la sheet
+     frame par frame via l'observer (sinon il laggerait derrière). */
   padding-bottom: calc(var(--sheet-handle-h) + var(--safe-bottom));
   position: relative;
   overflow: hidden;
@@ -430,7 +433,8 @@ body.preview-mode .stage { padding: 0; background: #000; }
   .tool-selector { gap: 0.4rem; }
   .palette-row { flex-wrap: wrap; }
   .palette-container { flex-wrap: wrap; flex: 1; }
-  .sheet[data-state="open"] { max-height: 65dvh; }
+  /* La sheet ouverte garde la même fraction qu'en mobile (cf. SHEET_OPEN_RATIO
+     dans modules/sheet.js) pour que le canvas LED reste visible. */
   .stage { padding: 1rem; }
   .canvas-container { max-width: 1100px; }
 }

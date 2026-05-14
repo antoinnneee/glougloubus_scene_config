@@ -17,7 +17,9 @@
   box-shadow: 0 -4px 20px rgba(0,0,0,0.25);
 }
 .sheet[data-state="open"] {
-  max-height: 78dvh;
+  /* Garde ~38% d'écran pour topbar + dock + canvas LED.
+     Doit rester synchro avec SHEET_OPEN_RATIO dans modules/sheet.js. */
+  max-height: 62dvh;
   box-shadow: 0 -10px 40px rgba(0,0,0,0.45);
 }
 
@@ -196,6 +198,53 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
   gap: 0.4rem;
+}
+
+/* Slider de taille unifié (onglet Props) */
+.size-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.size-row #size-slider {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent-color);
+  height: var(--tap-min);
+}
+
+.size-row #size-value {
+  flex: 0 0 5rem;
+  text-align: center;
+}
+
+/* Galerie d'images stock (onglet Image) */
+.stock-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  gap: 0.4rem;
+}
+
+.stock-thumb {
+  aspect-ratio: 1;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 0.12s, transform 0.08s;
+}
+
+.stock-thumb:hover { border-color: var(--accent-color); }
+.stock-thumb:active { transform: scale(0.95); }
+
+.stock-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .hint {

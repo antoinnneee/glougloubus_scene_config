@@ -186,10 +186,11 @@
               </div>
             </div>
 
-            <div id="pacman-tools" class="selection-tools" hidden>
-              <div class="section-title">Pacman</div>
-              <div class="row">
-                <label><span>Taille</span><input type="number" inputmode="numeric" id="pacman-size" value="6" min="1" max="32"></label>
+            <div id="size-tools" class="selection-tools" hidden>
+              <div class="section-title" id="size-title">Taille</div>
+              <div class="size-row">
+                <input type="range" id="size-slider" min="0" max="1" step="0.001" value="0.5" aria-label="Taille de l'item" />
+                <input type="number" inputmode="decimal" id="size-value" />
               </div>
             </div>
 
@@ -219,11 +220,7 @@
                 </select>
               </label>
             </div>
-            <div class="row">
-              <label><span>Size</span><input type="number" inputmode="numeric" id="text-size" value="16" min="1"></label>
-              <label><span>X</span><input type="number" inputmode="numeric" id="text-x" value="0"></label>
-              <label><span>Y</span><input type="number" inputmode="numeric" id="text-y" value="16"></label>
-            </div>
+            <p class="hint">Position : glisse le texte sur le canvas. Taille : slider de l'onglet Props.</p>
             <button id="btn-apply-text" class="btn primary">Ajouter le texte</button>
           </div>
 
@@ -255,6 +252,10 @@
               </label>
             </div>
             <button id="btn-apply-image" class="btn primary">Ajouter l'image</button>
+
+            <div class="section-title">Images stock</div>
+            <div id="stock-images" class="stock-grid"></div>
+            <p class="hint">Tape une vignette pour l'ajouter à la scène. Dépose des images dans <code>asset/</code> pour enrichir la liste.</p>
           </div>
 
           <!-- PANE: Animation -->
