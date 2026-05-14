@@ -115,8 +115,14 @@ const btnLoadProject = document.getElementById('btn-load-project');
 const fileLoadProject = document.getElementById('file-load-project');
 const btnNewProject = document.getElementById('btn-new-project');
 
-// Tools selector (shapes / pencil / eyedropper / bucket)
+// Tools selector — non-draw buttons only (select, pacman, pan)
 const toolButtons = document.querySelectorAll('[data-tool]');
+// Unified draw tool button + dropdown
+const btnDrawTool = document.getElementById('btn-draw-tool');
+const drawDropdown = document.getElementById('draw-dropdown');
+const DRAW_TOOLS = new Set(['pencil', 'line', 'rect', 'rect-outline', 'ellipse', 'bucket', 'eyedropper']);
+const DRAW_TOOL_ICONS = { pencil: '✏️', line: '╱', rect: '▣', 'rect-outline': '▢', ellipse: '◯', bucket: '🪣', eyedropper: '💧' };
+let currentDrawSubTool = 'pencil';
 
 // Palette
 const paletteContainer = document.getElementById('palette-container');
@@ -1458,6 +1464,19 @@ function deleteSelectedItem() {
   updateTimelineThumb(currentFrameIndex);
 }
 
+function openDrawDropdown() {
+  const r = btnDrawTool.getBoundingClientRect();
+  drawDropdown.style.top = `${r.bottom + 4}px`;
+  drawDropdown.style.left = `${r.left}px`;
+  drawDropdown.removeAttribute('hidden');
+  drawDropdown.querySelectorAll('[data-draw-tool]').forEach(b => {
+    b.classList.toggle('active', b.dataset.drawTool === currentDrawSubTool);
+  });
+}
+function closeDrawDropdown() {
+  drawDropdown.setAttribute('hidden', '');
+}
+
 function setTool(tool) {
   currentTool = tool;
   if (tool !== 'select') {
@@ -1467,9 +1486,18 @@ function setTool(tool) {
   }
   // Cursor
   canvas.style.cursor = tool === 'select' ? 'default' : tool === 'pan' ? 'grab' : 'crosshair';
-  // Active state sur les boutons
+  // Active state sur les boutons non-draw
   if (toolButtons) {
     toolButtons.forEach(b => b.classList.toggle('active', b.dataset.tool === tool));
+  }
+  // Active state + icône du bouton draw unifié
+  if (btnDrawTool) {
+    const isDrawTool = DRAW_TOOLS.has(tool);
+    btnDrawTool.classList.toggle('active', isDrawTool);
+    if (isDrawTool) {
+      currentDrawSubTool = tool;
+      btnDrawTool.textContent = DRAW_TOOL_ICONS[tool] || '✏️';
+    }
   }
   // Compat bouton pencil legacy
   if (btnTogglePencil) {
@@ -1578,31 +1606,62 @@ function drawPacman(context, item) {
     }
   }
 
-  // 2. Mange la trace : un trait épais (largeur = diamètre du Pacman) le long
-  //    du trajet parcouru. Un trait continu (lineCap/lineJoin round) plutôt que
-  //    des disques échantillonnés par frame → couloir CONTINU même quand le
-  //    Pacman se déplace vite (sinon on verrait des bouchées circulaires
-  //    espacées, donnant l'impression que seul son centre mange).
-  context.save();
-  context.globalAlpha = 1;
-  context.fillStyle = PACMAN_BG;
-  context.strokeStyle = PACMAN_BG;
-  context.lineWidth = r * 2;
-  context.lineCap = 'round';
-  context.lineJoin = 'round';
-  if (trail.length === 1) {
-    context.beginPath();
-    context.arc(trail[0].x, trail[0].y, r, 0, Math.PI * 2);
-    context.fill();
-  } else if (trail.length > 1) {
-    context.beginPath();
-    context.moveTo(trail[0].x, trail[0].y);
-    for (let i = 1; i < trail.length; i++) context.lineTo(trail[i].x, trail[i].y);
-    context.stroke();
+  // 2. Oriente le Pacman : direction du déplacement + rotation (track). La
+  //    bouche s'ouvre/ferme (chomp) selon la frame.
+  let dir = 0; // angle (rad), 0 = vers la droite
+  if (trail.length >= 2) {
+    const a = trail[trail.length - 2], b = trail[trail.length - 1];
+    if (b.x !== a.x || b.y !== a.y) dir = Math.atan2(b.y - a.y, b.x - a.x);
   }
-  context.restore();
+  dir += (item.rotation || 0) * Math.PI / 180;
+  const MAX_MOUTH = 0.9; // demi-angle max de la bouche (rad)
+  const mouthHalf = MAX_MOUTH * (0.5 + 0.5 * Math.sin(f * 0.9));
 
-  // 3. Miettes : tombent doucement depuis chaque pixel mangé puis s'estompent.
+  // 3. Mange la trace. Le rendu est SANS ÉTAT (recalculé entièrement à chaque
+  //    frame) : pour que rien ne "réapparaisse" quand la bouche se rouvre, la
+  //    zone mangée doit être MONOTONE croissante. On érode donc en deux temps :
+  //    a) couloir plein et continu pour tout le trajet déjà parcouru (sauf le
+  //       dernier point) → tout ce qui est DERRIÈRE le Pacman est mangé pour de
+  //       bon, bouche ouverte ou fermée ;
+  //    b) la forme du CORPS (disque privé du coin "bouche") à la position
+  //       courante → le corps mange, et seule la bouche encore ouverte laisse
+  //       voir ce qui sera croqué. À la frame suivante ce point devient "passé"
+  //       et le couloir plein le mange définitivement.
+  if (trail.length > 0) {
+    context.save();
+    context.globalAlpha = 1;
+    context.fillStyle = PACMAN_BG;
+    context.strokeStyle = PACMAN_BG;
+    context.lineWidth = r * 2;
+    context.lineCap = 'round';
+    context.lineJoin = 'round';
+    // a) couloir plein pour trail[0 .. n-2] (les positions déjà dépassées)
+    const behind = trail.length - 1;
+    if (behind === 1) {
+      context.beginPath();
+      context.arc(trail[0].x, trail[0].y, r, 0, Math.PI * 2);
+      context.fill();
+    } else if (behind >= 2) {
+      context.beginPath();
+      context.moveTo(trail[0].x, trail[0].y);
+      for (let i = 1; i < behind; i++) context.lineTo(trail[i].x, trail[i].y);
+      context.stroke();
+    }
+    // b) forme du corps (disque - bouche) à la position courante
+    const cur = trail[trail.length - 1];
+    context.beginPath();
+    if (mouthHalf > 0.001) {
+      context.moveTo(cur.x, cur.y);
+      context.arc(cur.x, cur.y, r, dir + mouthHalf, dir - mouthHalf + Math.PI * 2);
+      context.closePath();
+    } else {
+      context.arc(cur.x, cur.y, r, 0, Math.PI * 2);
+    }
+    context.fill();
+    context.restore();
+  }
+
+  // 4. Miettes : tombent doucement depuis chaque pixel mangé puis s'estompent.
   const CRUMB_LIFE = 16;   // durée de vie (frames)
   const GRAVITY = 0.05;    // accélération verticale douce (px/frame²)
   const CRUMBS_PER = 2;    // miettes générées par pixel mangé
@@ -1630,16 +1689,8 @@ function drawPacman(context, item) {
   }
   context.restore();
 
-  // 4. Corps : disque avec bouche animée (chomp), orienté vers le mouvement.
-  //    La rotation (track) s'ajoute à l'orientation automatique du mouvement.
-  let dir = 0; // angle (rad), 0 = vers la droite
-  if (trail.length >= 2) {
-    const a = trail[trail.length - 2], b = trail[trail.length - 1];
-    if (b.x !== a.x || b.y !== a.y) dir = Math.atan2(b.y - a.y, b.x - a.x);
-  }
-  dir += (item.rotation || 0) * Math.PI / 180;
-  const MAX_MOUTH = 0.9; // demi-angle max de la bouche (rad)
-  const mouthHalf = MAX_MOUTH * (0.5 + 0.5 * Math.sin(f * 0.9));
+  // 5. Corps : disque jaune avec la bouche animée découpée, dessiné par-dessus
+  //    la zone qu'il vient de manger (dir / mouthHalf calculés à l'étape 2).
   context.save();
   context.fillStyle = item.color || '#ffe14d';
   context.beginPath();
@@ -1648,7 +1699,7 @@ function drawPacman(context, item) {
   context.closePath();
   context.fill();
 
-  // 5. Œil : rouge quand il mord réellement du contenu, sinon sombre.
+  // 6. Œil : rouge quand il mord réellement du contenu, sinon sombre.
   const eyeAng = dir - Math.PI / 2;
   const ex = x + Math.cos(eyeAng) * r * 0.45 + Math.cos(dir) * r * 0.15;
   const ey = y + Math.sin(eyeAng) * r * 0.45 + Math.sin(dir) * r * 0.15;

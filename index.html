@@ -48,13 +48,7 @@
       <section class="dock">
         <div class="tool-selector">
           <button class="tool-btn" data-tool="select" title="Sélection (V)" aria-label="Select">⟑</button>
-          <button class="tool-btn" data-tool="pencil" title="Pinceau" aria-label="Pencil">✏️</button>
-          <button class="tool-btn" data-tool="line" title="Ligne" aria-label="Line">/</button>
-          <button class="tool-btn" data-tool="rect" title="Rect plein" aria-label="Rectangle">▣</button>
-          <button class="tool-btn" data-tool="rect-outline" title="Rect creux" aria-label="Rectangle outline">▢</button>
-          <button class="tool-btn" data-tool="ellipse" title="Ellipse" aria-label="Ellipse">◯</button>
-          <button class="tool-btn" data-tool="bucket" title="Remplissage" aria-label="Bucket">🪣</button>
-          <button class="tool-btn" data-tool="eyedropper" title="Pipette" aria-label="Eyedropper">💧</button>
+          <button class="tool-btn" id="btn-draw-tool" title="Dessiner — re-cliquer pour changer d'outil" aria-label="Draw">✏️</button>
           <button class="tool-btn" data-tool="pacman" title="Pacman grignoteur (glisse départ→arrivée)" aria-label="Pacman">🟡</button>
           <button class="tool-btn" data-tool="pan" title="Déplacer la vue (Espace)" aria-label="Pan">✋</button>
         </div>
@@ -348,6 +342,17 @@
         </div>
       </div>
     </dialog>
+
+    <!-- Draw tool dropdown (position: fixed, positioned via JS) -->
+    <div id="draw-dropdown" class="draw-dropdown" hidden role="menu">
+      <button class="draw-dropdown-item" data-draw-tool="pencil" role="menuitem">✏️ Pinceau</button>
+      <button class="draw-dropdown-item" data-draw-tool="line" role="menuitem">╱ Ligne</button>
+      <button class="draw-dropdown-item" data-draw-tool="rect" role="menuitem">▣ Rect plein</button>
+      <button class="draw-dropdown-item" data-draw-tool="rect-outline" role="menuitem">▢ Rect creux</button>
+      <button class="draw-dropdown-item" data-draw-tool="ellipse" role="menuitem">◯ Ellipse</button>
+      <button class="draw-dropdown-item" data-draw-tool="bucket" role="menuitem">🪣 Remplissage</button>
+      <button class="draw-dropdown-item" data-draw-tool="eyedropper" role="menuitem">💧 Pipette</button>
+    </div>
 
     <script type="module" src="./main.js"></script>
   </body>

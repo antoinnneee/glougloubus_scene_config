@@ -115,8 +115,50 @@
 }
 .tool-selector {
   display: grid;
-  grid-template-columns: repeat(10, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.3rem;
+}
+
+/* Draw tool dropdown (position:fixed, placed via JS) */
+.draw-dropdown {
+  position: fixed;
+  z-index: 200;
+  background: var(--bg-elevated);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 10px;
+  padding: 0.3rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 155px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.55);
+}
+.draw-dropdown[hidden] { display: none; }
+.draw-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.38rem 0.6rem;
+  border-radius: 6px;
+  background: transparent;
+  border: none;
+  color: var(--text-main);
+  font-family: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.draw-dropdown-item:hover {
+  background: rgba(59,130,246,0.15);
+  color: var(--accent-hover);
+}
+.draw-dropdown-item.active {
+  background: rgba(59,130,246,0.2);
+  color: var(--accent-hover);
 }
 .tool-btn {
   background: var(--bg-secondary);
