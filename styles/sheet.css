@@ -138,15 +138,17 @@
 /* Transform controls (Phase 5) */
 .transform-grid {
   display: flex;
-  flex-direction: column;
-  gap: 0.45rem;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
 }
 .transform-group {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 0.35rem;
-  padding: 0.45rem 0.55rem;
+  padding: 0.35rem 0.45rem;
   background: rgba(0, 0, 0, 0.2);
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.05);

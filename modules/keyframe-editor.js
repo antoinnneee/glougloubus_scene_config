@@ -6,6 +6,7 @@ const TRACKS_BY_TYPE = {
   image:   ['x', 'y', 'scale', 'rotation', 'opacity'],
   drawing: ['x', 'y', 'rotation', 'opacity'],
   shape:   ['x1', 'y1', 'x2', 'y2', 'rotation', 'color', 'opacity'],
+  pacman:  ['x', 'y', 'size', 'rotation', 'opacity'],
 };
 
 const EASINGS = ['linear', 'ease-in', 'ease-out', 'ease-in-out', 'bounce'];

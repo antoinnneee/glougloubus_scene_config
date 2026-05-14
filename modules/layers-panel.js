@@ -8,6 +8,7 @@ const TYPE_ICONS = {
   drawing: '✏️',
   shape:   '▢',
   group:   '📁',
+  pacman:  '🟡',
 };
 
 function shapeIcon(shape) {

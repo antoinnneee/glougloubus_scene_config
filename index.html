@@ -55,6 +55,8 @@
           <button class="tool-btn" data-tool="ellipse" title="Ellipse" aria-label="Ellipse">◯</button>
           <button class="tool-btn" data-tool="bucket" title="Remplissage" aria-label="Bucket">🪣</button>
           <button class="tool-btn" data-tool="eyedropper" title="Pipette" aria-label="Eyedropper">💧</button>
+          <button class="tool-btn" data-tool="pacman" title="Pacman grignoteur (glisse départ→arrivée)" aria-label="Pacman">🟡</button>
+          <button class="tool-btn" data-tool="pan" title="Déplacer la vue (Espace)" aria-label="Pan">✋</button>
         </div>
         <div class="palette-row">
           <input type="color" id="pencil-color" value="#ff0000" aria-label="Couleur du pinceau" />
@@ -163,8 +165,6 @@
               </label>
             </div>
 
-            <!-- Transforms (Phase 5) -->
-            <div class="section-title">Transformations</div>
             <div class="transform-grid">
               <div class="transform-group" aria-label="Rotation">
                 <label class="transform-input">
@@ -189,6 +189,13 @@
               <div class="transform-group" aria-label="Distribution">
                 <button id="btn-dist-h" class="iconbtn" title="Distribuer horizontalement (≥3)" aria-label="Distribute H">↔</button>
                 <button id="btn-dist-v" class="iconbtn" title="Distribuer verticalement (≥3)" aria-label="Distribute V">↕</button>
+              </div>
+            </div>
+
+            <div id="pacman-tools" class="selection-tools" hidden>
+              <div class="section-title">Pacman</div>
+              <div class="row">
+                <label><span>Taille</span><input type="number" inputmode="numeric" id="pacman-size" value="6" min="1" max="32"></label>
               </div>
             </div>
 
@@ -219,7 +226,6 @@
               </label>
             </div>
             <div class="row">
-              <label><span>Color</span><input type="color" id="text-color" value="#ffffff"></label>
               <label><span>Size</span><input type="number" inputmode="numeric" id="text-size" value="16" min="1"></label>
               <label><span>X</span><input type="number" inputmode="numeric" id="text-x" value="0"></label>
               <label><span>Y</span><input type="number" inputmode="numeric" id="text-y" value="16"></label>

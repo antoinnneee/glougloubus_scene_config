@@ -20,7 +20,7 @@ function randomId() {
 }
 
 function defaultName(type, id) {
-  const map = { text: 'Texte', image: 'Image', drawing: 'Tracé', shape: 'Forme', group: 'Groupe' };
+  const map = { text: 'Texte', image: 'Image', drawing: 'Tracé', shape: 'Forme', group: 'Groupe', pacman: 'Pacman' };
   return `${map[type] || type} ${id.slice(0, 4)}`;
 }
 
@@ -64,6 +64,10 @@ function defaultStatic(type) {
     case 'image':   return { imgId: null, flipX: false, flipY: false };
     case 'drawing': return { points: [], flipX: false, flipY: false };
     case 'shape':   return { shape: 'rect', flipX: false, flipY: false };
+    // pacman : color = couleur du corps. x/y (centre), size (rayon) et rotation
+    // sont animés via tracks — les keyframes x[0]/x[dernier] définissent le
+    // début et la fin du déplacement.
+    case 'pacman':  return { color: '#ffe14d', flipX: false, flipY: false };
     case 'group':   return {};
   }
   return {};
@@ -187,6 +191,32 @@ function materialize(obj, f) {
     out.x2 = getValueAt(obj.tracks.x2, f, 0);
     out.y2 = getValueAt(obj.tracks.y2, f, 0);
     out.color = getValueAt(obj.tracks.color, f, '#ffffff');
+  } else if (obj.type === 'pacman') {
+    // x/y = centre du Pacman. On enrichit l'item avec tout ce dont le rendu a
+    // besoin pour être DÉTERMINISTE par frame (trace mangée, miettes, bouche,
+    // œil) : frame courante + bornes d'animation + trace échantillonnée.
+    out.x = getValueAt(obj.tracks.x, f, 0);
+    out.y = getValueAt(obj.tracks.y, f, 0);
+    out.size = getValueAt(obj.tracks.size, f, 6);
+    out.color = obj.static.color || '#ffe14d';
+    out.f = f;
+    const xt = obj.tracks.x || [];
+    const animStartF = xt.length ? xt[0].f : 0;
+    const animEndF = xt.length ? xt[xt.length - 1].f : 0;
+    out.animStartF = animStartF;
+    out.animEndF = animEndF;
+    // Trace = une position par frame entière de animStartF à min(f, animEndF).
+    // C'est la zone que le Pacman a « mangée ».
+    const trail = [];
+    const lastF = Math.min(f, animEndF);
+    for (let ff = animStartF; ff <= lastF; ff++) {
+      trail.push({
+        x: getValueAt(obj.tracks.x, ff, 0),
+        y: getValueAt(obj.tracks.y, ff, 0),
+        f: ff,
+      });
+    }
+    out.trail = trail;
   }
   return out;
 }
@@ -248,6 +278,7 @@ export function evaluateScene(project, f) {
       if (item.y !== undefined) item.y += parentTy;
       if (item.x1 !== undefined) { item.x1 += parentTx; item.x2 += parentTx; }
       if (item.y1 !== undefined) { item.y1 += parentTy; item.y2 += parentTy; }
+      if (item.trail) item.trail.forEach(p => { p.x += parentTx; p.y += parentTy; });
     }
     if (parentOp !== 1) item.opacity = (item.opacity ?? 1) * parentOp;
     out.push(item);
@@ -295,6 +326,19 @@ export function makeShapeObject({ shape, x1, y1, x2, y2, color, f = 0 }) {
   setKeyframe(obj, 'x2', f, x2);
   setKeyframe(obj, 'y2', f, y2);
   setKeyframe(obj, 'color', f, color);
+  return obj;
+}
+
+// Crée un Pacman avec son trajet : (x1,y1) à la frame fStart, (x2,y2) à fEnd.
+// Ces 2 keyframes x/y définissent le début et la fin du déplacement et restent
+// éditables dans la timeline globale.
+export function makePacmanObject({ x1, y1, x2, y2, fStart = 0, fEnd = 0, size = 6, color = '#ffe14d' }) {
+  const obj = createObject('pacman', { name: 'Pacman', static: { color } });
+  setKeyframe(obj, 'x', fStart, x1);
+  setKeyframe(obj, 'x', fEnd, x2);
+  setKeyframe(obj, 'y', fStart, y1);
+  setKeyframe(obj, 'y', fEnd, y2);
+  setKeyframe(obj, 'size', fStart, size);
   return obj;
 }
 

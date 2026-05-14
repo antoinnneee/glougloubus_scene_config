@@ -27,6 +27,8 @@ export function sheetAutoOpen(item) {
   if (!item) return;
   if (item.type === 'text') activateTab('text');
   else if (item.type === 'image') activateTab('image');
+  // Pacman : on ouvre la timeline — c'est là qu'on règle le début/fin du trajet.
+  else if (item.type === 'pacman') activateTab('timeline');
   else activateTab('props');
 }
 

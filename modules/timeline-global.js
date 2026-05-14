@@ -10,6 +10,7 @@ const TRACKS_BY_TYPE = {
   drawing: ['x', 'y', 'rotation', 'opacity'],
   shape:   ['x1', 'y1', 'x2', 'y2', 'rotation', 'color', 'opacity'],
   group:   ['x', 'y', 'opacity'],
+  pacman:  ['x', 'y', 'size', 'rotation', 'opacity'],
 };
 
 const EASINGS = ['linear', 'ease-in', 'ease-out', 'ease-in-out', 'bounce'];

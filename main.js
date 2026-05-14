@@ -22,6 +22,7 @@ import {
   makeImageObject,
   makeDrawingObject,
   makeShapeObject,
+  makePacmanObject,
 } from './modules/scene.js';
 import { renderKeyframeEditor } from './modules/keyframe-editor.js';
 import { renderLayersPanel } from './modules/layers-panel.js';
@@ -72,7 +73,6 @@ const imgScale = document.getElementById('img-scale');
 const btnApplyImage = document.getElementById('btn-apply-image');
 
 const textInput = document.getElementById('text-input');
-const textColor = document.getElementById('text-color');
 const textSize = document.getElementById('text-size');
 const textX = document.getElementById('text-x');
 const textY = document.getElementById('text-y');
@@ -81,6 +81,10 @@ const btnApplyText = document.getElementById('btn-apply-text');
 
 const selectionTools = document.getElementById('selection-tools');
 const btnDeleteItem = document.getElementById('btn-delete-item');
+
+// Pacman : panneau de propriétés (taille du rayon)
+const pacmanTools = document.getElementById('pacman-tools');
+const pacmanSize = document.getElementById('pacman-size');
 
 const btnTogglePencil = document.getElementById('btn-toggle-pencil');
 const pencilColor = document.getElementById('pencil-color');
@@ -254,8 +258,12 @@ function toggleSelection(id) {
   if (selectedIds.has(id)) removeFromSelection(id);
   else addSelection(id);
 }
-// 'select' | 'pencil' | 'eyedropper' | 'line' | 'rect' | 'rect-outline' | 'ellipse' | 'bucket'
+// 'select' | 'pencil' | 'eyedropper' | 'line' | 'rect' | 'rect-outline' | 'ellipse' | 'bucket' | 'pan'
 let currentTool = 'select';
+let isPanning = false;
+let panStartClientX = 0, panStartClientY = 0;
+let panStartViewX = 0, panStartViewY = 0;
+let prevToolBeforeSpace = null;
 let isDragging = false;
 let currentDrawingId = null;
 let dragStartX = 0;
@@ -264,6 +272,8 @@ let itemStartX = 0;
 let itemStartY = 0;
 // Preview shape en cours (line/rect/ellipse)
 let shapePreview = null;
+// Preview Pacman en cours (drag départ→arrivée avec l'outil pacman)
+let pacmanPreview = null;
 
 // Pinch multi-touch sur canvas : resize item ou zoom vue
 const canvasPointers = new Map();   // pointerId -> { x, y }
@@ -411,27 +421,58 @@ function init() {
   canvas.addEventListener('pointerup', handlePointerUp);
   canvas.addEventListener('pointercancel', handlePointerUp);
   
-  // Keyboard Delete
+  // Keyboard Delete + Space pan
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'Delete' || e.key === 'Backspace') {
-      const activeTag = document.activeElement.tagName.toLowerCase();
-      if (activeTag !== 'input' && activeTag !== 'textarea') {
-        if (selectedItemId) {
-          e.preventDefault();
-          deleteSelectedItem();
-        }
+    const activeTag = document.activeElement.tagName.toLowerCase();
+    if (activeTag === 'input' || activeTag === 'textarea') return;
+
+    if (e.code === 'Space' && !e.repeat) {
+      e.preventDefault();
+      if (currentTool !== 'pan') {
+        prevToolBeforeSpace = currentTool;
+        setTool('pan');
       }
+      return;
+    }
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      if (selectedItemId) {
+        e.preventDefault();
+        deleteSelectedItem();
+      }
+    }
+  });
+  window.addEventListener('keyup', (e) => {
+    if (e.code === 'Space' && prevToolBeforeSpace !== null) {
+      setTool(prevToolBeforeSpace);
+      prevToolBeforeSpace = null;
     }
   });
   
   // Property changes live update the selected item.
   // pushUndo au premier focus = 1 point d'undo par session d'édition (pas par frappe).
-  const propertyInputs = [textInput, textColor, textSize, textX, textY, textFont, imgX, imgY, imgScale];
+  const propertyInputs = [textInput, textSize, textX, textY, textFont, imgX, imgY, imgScale, pacmanSize];
   propertyInputs.forEach(el => {
     if (!el) return;
     el.addEventListener('input', updateSelectedItemProperties);
     el.addEventListener('focus', () => { if (selectedItemId) pushUndo(); });
   });
+
+  // pencilColor = couleur unifiée : met à jour l'item sélectionné (texte, dessin, shape) en live
+  if (pencilColor) {
+    pencilColor.addEventListener('focus', () => { if (selectedItemId) pushUndo(); });
+    pencilColor.addEventListener('input', () => {
+      const obj = getObject(selectedItemId);
+      if (!obj) return;
+      if (obj.type === 'text' || obj.type === 'drawing' || obj.type === 'shape') {
+        updateObjectProp(obj, 'color', pencilColor.value);
+        renderCanvas();
+      }
+    });
+    pencilColor.addEventListener('change', () => {
+      pushRecentColor(pencilColor.value);
+      if (selectedItemId) updateTimelineThumb(currentFrameIndex);
+    });
+  }
 
   // Init des fonctionnalités additionnelles
   initExtras();
@@ -497,12 +538,13 @@ function handlePointerDown(e) {
     }
     currentDrawingId = null;
     shapePreview = null;
+    pacmanPreview = null;
 
     const pts = [...canvasPointers.values()];
     pinchStartDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
 
     const selObj = getObject(selectedItemId);
-    if (selObj && (selObj.type === 'text' || selObj.type === 'image')) {
+    if (selObj && (selObj.type === 'text' || selObj.type === 'image' || selObj.type === 'pacman')) {
       pinchMode = 'resize';
       pushUndo();
       const it = currentItems().find(i => i.sourceId === selObj.id);
@@ -520,6 +562,16 @@ function handlePointerDown(e) {
     return;
   }
   if (canvasPointers.size > 2) return;
+
+  if (currentTool === 'pan') {
+    isPanning = true;
+    panStartClientX = e.clientX;
+    panStartClientY = e.clientY;
+    panStartViewX = viewPanX;
+    panStartViewY = viewPanY;
+    canvas.style.cursor = 'grabbing';
+    return;
+  }
 
   const raw = getCanvasCoords(e);
   const x = raw.x, y = raw.y;
@@ -562,6 +614,14 @@ function handlePointerDown(e) {
     return;
   }
 
+  // Pacman tool : drag = point de départ → point d'arrivée du trajet
+  if (currentTool === 'pacman') {
+    isDragging = true;
+    pacmanPreview = { x1: x, y1: y, x2: x, y2: y, size: 6 };
+    renderCanvas();
+    return;
+  }
+
   // Rotation handle (cercle au-dessus du bbox)
   if (selectedItemId && selectedIds.size === 1) {
     const it = currentItems().find(i => i.sourceId === selectedItemId);
@@ -583,7 +643,7 @@ function handlePointerDown(e) {
   // Resize handles : seulement si rotation = 0 (handles dessinés uniquement dans ce cas)
   if (selectedItemId) {
     const it = currentItems().find(i => i.sourceId === selectedItemId);
-    if (it && !it.rotation && (it.type === 'text' || it.type === 'image')) {
+    if (it && !it.rotation && (it.type === 'text' || it.type === 'image' || it.type === 'pacman')) {
       const bounds = getItemBounds(it);
       const hHit = getResizeHitRadius();
       const isHit = (hx, hy) => Math.abs(x - hx) <= hHit && Math.abs(y - hy) <= hHit;
@@ -712,7 +772,6 @@ function rgbToHex(r, g, b) {
 
 function applyColorToActiveTool(hex) {
   pencilColor.value = hex;
-  textColor.value = hex;
   const obj = getObject(selectedItemId);
   if (obj && (obj.type === 'text' || obj.type === 'drawing' || obj.type === 'shape')) {
     pushUndo();
@@ -781,6 +840,10 @@ function handlePointerMove(e) {
           const newScale = Math.max(0.01, pinchStartItem.scale * ratio);
           updateObjectProp(obj, 'scale', newScale);
           if (imgScale) imgScale.value = newScale.toFixed(2);
+        } else if (obj.type === 'pacman') {
+          const newR = Math.max(1, Math.min(32, Math.round((pinchStartItem.size || 6) * ratio)));
+          updateObjectProp(obj, 'size', newR);
+          if (pacmanSize) pacmanSize.value = newR;
         }
         renderCanvas();
       }
@@ -792,12 +855,27 @@ function handlePointerMove(e) {
     return;
   }
 
+  if (isPanning) {
+    viewPanX = panStartViewX + (e.clientX - panStartClientX);
+    viewPanY = panStartViewY + (e.clientY - panStartClientY);
+    applyCanvasTransform();
+    return;
+  }
+
   const { x, y } = getCanvasCoords(e);
 
   // Preview pendant drag d'un shape
   if (isDragging && shapePreview && ['line','rect','rect-outline','ellipse'].includes(currentTool)) {
     shapePreview.x2 = applySnap(x);
     shapePreview.y2 = applySnap(y);
+    renderCanvas();
+    return;
+  }
+
+  // Preview pendant drag du Pacman (départ→arrivée)
+  if (isDragging && pacmanPreview && currentTool === 'pacman') {
+    pacmanPreview.x2 = x;
+    pacmanPreview.y2 = y;
     renderCanvas();
     return;
   }
@@ -852,6 +930,14 @@ function handlePointerMove(e) {
           imgScale.value = newScale.toFixed(2);
           imgX.value = newX;
           imgY.value = newY;
+       } else if (obj.type === 'pacman') {
+          // Pacman = cercle centré sur (x,y) : le centre reste fixe, le rayon
+          // suit le curseur (n'importe quel handle de coin agrandit/réduit).
+          const newR = Math.max(1, Math.min(32, Math.round(
+            Math.max(Math.abs(x - resizeItemStartX), Math.abs(y - resizeItemStartY))
+          )));
+          updateObjectProp(obj, 'size', newR);
+          if (pacmanSize) pacmanSize.value = newR;
        }
 
        renderCanvas();
@@ -908,7 +994,7 @@ function handlePointerMove(e) {
     const start = groupDragStarts.get(id);
     if (!start) continue;
 
-    if (obj.type === 'text' || obj.type === 'image' || obj.type === 'drawing') {
+    if (obj.type === 'text' || obj.type === 'image' || obj.type === 'drawing' || obj.type === 'pacman') {
       const newX = applySnap(start.x + dx);
       const newY = applySnap(start.y + dy);
       updateObjectProp(obj, 'x', newX);
@@ -957,6 +1043,12 @@ function handlePointerUp(e) {
   }
   canvasPointers.delete(e.pointerId);
 
+  if (isPanning) {
+    isPanning = false;
+    canvas.style.cursor = 'grab';
+    return;
+  }
+
   // Fin de pinch
   if (pinchMode && canvasPointers.size < 2) {
     pinchMode = null;
@@ -986,6 +1078,29 @@ function handlePointerUp(e) {
     renderCanvas();
     updateTimelineThumb(currentFrameIndex);
     updateLayersPanel();
+  }
+
+  // Commit Pacman preview en objet réel : 2 keyframes x/y (départ → arrivée).
+  // Le déplacement dure 20 frames par défaut ; on étend frameCount si besoin
+  // pour que la keyframe de fin tienne dans la timeline.
+  if (pacmanPreview) {
+    pushUndo();
+    const fStart = currentFrameIndex;
+    let fEnd = currentFrameIndex + 20;
+    if (fEnd > project.frameCount - 1) project.frameCount = fEnd + 1;
+    const obj = makePacmanObject({
+      x1: pacmanPreview.x1, y1: pacmanPreview.y1,
+      x2: pacmanPreview.x2, y2: pacmanPreview.y2,
+      fStart, fEnd, size: pacmanPreview.size,
+    });
+    project.objects.push(obj);
+    pacmanPreview = null;
+    isDragging = false;
+    setSingleSelection(obj.id);
+    renderCanvas();
+    updateTimelineThumb(currentFrameIndex);
+    updateSelectionUI();
+    return;
   }
 
   // Commit marquee selection
@@ -1082,6 +1197,10 @@ function getItemBounds(item) {
     const minX = Math.min(x1, x2), minY = Math.min(y1, y2);
     const maxX = Math.max(x1, x2), maxY = Math.max(y1, y2);
     return { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 };
+  } else if (item.type === 'pacman') {
+    // x/y = centre, size = rayon → bbox carré centré.
+    const r = item.size || 6;
+    return { x: item.x - r, y: item.y - r, width: 2 * r, height: 2 * r };
   }
   return { x:0, y:0, width:0, height:0 };
 }
@@ -1089,7 +1208,7 @@ function getItemBounds(item) {
 function populatePropertiesPanel(item) {
   if (item.type === 'text') {
     textInput.value = item.text;
-    textColor.value = item.color;
+    pencilColor.value = item.color;
     textSize.value = item.size;
     textX.value = item.x;
     textY.value = item.y;
@@ -1098,6 +1217,10 @@ function populatePropertiesPanel(item) {
     imgX.value = item.x;
     imgY.value = item.y;
     imgScale.value = item.scale;
+  } else if (item.type === 'pacman') {
+    if (pacmanSize) pacmanSize.value = Math.round(item.size || 6);
+  } else if (item.type === 'drawing' || item.type === 'shape') {
+    if (item.color) pencilColor.value = item.color;
   }
 }
 
@@ -1107,7 +1230,7 @@ function updateSelectedItemProperties(e) {
 
   if (obj.type === 'text') {
     updateObjectProp(obj, 'text',  textInput.value);
-    updateObjectProp(obj, 'color', textColor.value);
+    updateObjectProp(obj, 'color', pencilColor.value);
     updateObjectProp(obj, 'size',  parseInt(textSize.value) || 16);
     updateObjectProp(obj, 'x',     parseInt(textX.value) || 0);
     updateObjectProp(obj, 'y',     parseInt(textY.value) || 16);
@@ -1116,6 +1239,9 @@ function updateSelectedItemProperties(e) {
     updateObjectProp(obj, 'x',     parseInt(imgX.value) || 0);
     updateObjectProp(obj, 'y',     parseInt(imgY.value) || 0);
     updateObjectProp(obj, 'scale', parseFloat(imgScale.value) || 1.0);
+  } else if (obj.type === 'pacman') {
+    const s = Math.max(1, Math.min(32, parseInt(pacmanSize.value) || 6));
+    updateObjectProp(obj, 'size', s);
   }
 
   renderCanvas();
@@ -1126,16 +1252,23 @@ function updateSelectionUI() {
   const has = !!selectedItemId;
   selectionTools.hidden = !has;
   if (btnDeleteSelected) btnDeleteSelected.disabled = !has;
+  let selType = null;
   if (has) {
     const it = currentItems().find(i => i.sourceId === selectedItemId);
     if (it) {
+      selType = it.type;
       sheetAutoOpen(it);
       // Sync rotation input avec l'objet courant
       if (propRotation && document.activeElement !== propRotation) {
         propRotation.value = (Math.round((it.rotation || 0) * 10) / 10).toString();
       }
+      // Panneau Pacman : visible + synchronisé seulement pour un Pacman
+      if (it.type === 'pacman' && pacmanSize && document.activeElement !== pacmanSize) {
+        pacmanSize.value = Math.round(it.size || 6);
+      }
     }
   }
+  if (pacmanTools) pacmanTools.hidden = selType !== 'pacman';
   updateKeyframeEditor();
   updateLayersPanel();
   // Re-render la timeline globale : les lanes dépendent de l'objet sélectionné
@@ -1333,7 +1466,7 @@ function setTool(tool) {
     renderCanvas();
   }
   // Cursor
-  canvas.style.cursor = tool === 'select' ? 'default' : 'crosshair';
+  canvas.style.cursor = tool === 'select' ? 'default' : tool === 'pan' ? 'grab' : 'crosshair';
   // Active state sur les boutons
   if (toolButtons) {
     toolButtons.forEach(b => b.classList.toggle('active', b.dataset.tool === tool));
@@ -1374,7 +1507,9 @@ function drawItem(context, item) {
   const rot = item.rotation || 0;
   const fx = item.flipX ? -1 : 1;
   const fy = item.flipY ? -1 : 1;
-  if (rot !== 0 || fx !== 1 || fy !== 1) {
+  // Le Pacman applique sa propre rotation en interne (sur le corps uniquement,
+  // pas sur la trace mangée ni les miettes qui vivent en espace monde).
+  if (item.type !== 'pacman' && (rot !== 0 || fx !== 1 || fy !== 1)) {
     const c = getItemCenter(item);
     context.translate(c.x, c.y);
     if (rot) context.rotate(rot * Math.PI / 180);
@@ -1397,7 +1532,130 @@ function drawItem(context, item) {
     item.points.forEach(pt => context.fillRect(pt.x + ox, pt.y + oy, 1, 1));
   } else if (item.type === 'shape') {
     drawShape(context, item);
+  } else if (item.type === 'pacman') {
+    drawPacman(context, item);
   }
+  context.restore();
+}
+
+// Couleur de fond de drawFrameToContext — le Pacman « mange » en repeignant
+// cette couleur par-dessus les calques situés sous lui dans l'ordre z.
+const PACMAN_BG = '#050505';
+
+// Hash déterministe seed -> [0,1). Les miettes doivent être reproductibles à
+// l'identique d'un rendu à l'autre (preview, thumbnails, export).
+function pacmanRand(seed) {
+  const x = Math.sin(seed * 127.1 + 311.7) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+// Dessine un Pacman + sa trace mangée + ses miettes. item est enrichi par
+// materialize() : { x, y, size, color, f, animStartF, animEndF, trail[] }.
+// Tout est fonction pure de item.f → rendu déterministe.
+function drawPacman(context, item) {
+  const { x, y, f } = item;
+  const r = item.size || 6;
+  const trail = item.trail || [];
+  const animStartF = item.animStartF ?? 0;
+  const animEndF = item.animEndF ?? 0;
+
+  // 1. Échantillonne la couleur sous chaque point de trace AVANT d'effacer :
+  //    sert à colorer les miettes et à savoir s'il mord vraiment du contenu.
+  const eaten = []; // points où il y avait autre chose que le fond
+  let eatingNow = false;
+  for (let i = 0; i < trail.length; i++) {
+    const p = trail[i];
+    const px = Math.max(0, Math.min(WIDTH - 1, Math.round(p.x)));
+    const py = Math.max(0, Math.min(HEIGHT - 1, Math.round(p.y)));
+    let d;
+    try { d = context.getImageData(px, py, 1, 1).data; } catch { d = null; }
+    if (!d) continue;
+    const isBg = d[0] <= 12 && d[1] <= 12 && d[2] <= 12; // fond #050505 + tolérance
+    if (!isBg) {
+      eaten.push({ x: p.x, y: p.y, f: p.f, color: `rgb(${d[0]},${d[1]},${d[2]})` });
+      // Dernier point = position courante : mord-il du contenu en ce moment ?
+      if (i === trail.length - 1 && f >= animStartF && f <= animEndF) eatingNow = true;
+    }
+  }
+
+  // 2. Mange la trace : un trait épais (largeur = diamètre du Pacman) le long
+  //    du trajet parcouru. Un trait continu (lineCap/lineJoin round) plutôt que
+  //    des disques échantillonnés par frame → couloir CONTINU même quand le
+  //    Pacman se déplace vite (sinon on verrait des bouchées circulaires
+  //    espacées, donnant l'impression que seul son centre mange).
+  context.save();
+  context.globalAlpha = 1;
+  context.fillStyle = PACMAN_BG;
+  context.strokeStyle = PACMAN_BG;
+  context.lineWidth = r * 2;
+  context.lineCap = 'round';
+  context.lineJoin = 'round';
+  if (trail.length === 1) {
+    context.beginPath();
+    context.arc(trail[0].x, trail[0].y, r, 0, Math.PI * 2);
+    context.fill();
+  } else if (trail.length > 1) {
+    context.beginPath();
+    context.moveTo(trail[0].x, trail[0].y);
+    for (let i = 1; i < trail.length; i++) context.lineTo(trail[i].x, trail[i].y);
+    context.stroke();
+  }
+  context.restore();
+
+  // 3. Miettes : tombent doucement depuis chaque pixel mangé puis s'estompent.
+  const CRUMB_LIFE = 16;   // durée de vie (frames)
+  const GRAVITY = 0.05;    // accélération verticale douce (px/frame²)
+  const CRUMBS_PER = 2;    // miettes générées par pixel mangé
+  context.save();
+  for (const e of eaten) {
+    const age = f - e.f;
+    if (age < 0 || age >= CRUMB_LIFE) continue;
+    for (let k = 0; k < CRUMBS_PER; k++) {
+      const seed = e.f * 17.3 + k * 101.7 + Math.round(e.x) * 0.13;
+      // Point de ponte réparti dans le disque mangé (et pas seulement au
+      // centre) : angle + rayon pseudo-aléatoires.
+      const sAng = pacmanRand(seed + 3) * Math.PI * 2;
+      const sRad = pacmanRand(seed + 5) * r;
+      const sx = e.x + Math.cos(sAng) * sRad;
+      const sy = e.y + Math.sin(sAng) * sRad;
+      const vx = (pacmanRand(seed) - 0.5) * 0.6;
+      const vy = pacmanRand(seed + 7) * 0.25;
+      const cx = sx + vx * age;
+      const cy = sy + vy * age + 0.5 * GRAVITY * age * age;
+      if (cy >= HEIGHT) continue;
+      context.globalAlpha = Math.max(0, 1 - age / CRUMB_LIFE);
+      context.fillStyle = e.color;
+      context.fillRect(Math.round(cx), Math.round(cy), 1, 1);
+    }
+  }
+  context.restore();
+
+  // 4. Corps : disque avec bouche animée (chomp), orienté vers le mouvement.
+  //    La rotation (track) s'ajoute à l'orientation automatique du mouvement.
+  let dir = 0; // angle (rad), 0 = vers la droite
+  if (trail.length >= 2) {
+    const a = trail[trail.length - 2], b = trail[trail.length - 1];
+    if (b.x !== a.x || b.y !== a.y) dir = Math.atan2(b.y - a.y, b.x - a.x);
+  }
+  dir += (item.rotation || 0) * Math.PI / 180;
+  const MAX_MOUTH = 0.9; // demi-angle max de la bouche (rad)
+  const mouthHalf = MAX_MOUTH * (0.5 + 0.5 * Math.sin(f * 0.9));
+  context.save();
+  context.fillStyle = item.color || '#ffe14d';
+  context.beginPath();
+  context.moveTo(x, y);
+  context.arc(x, y, r, dir + mouthHalf, dir - mouthHalf + Math.PI * 2);
+  context.closePath();
+  context.fill();
+
+  // 5. Œil : rouge quand il mord réellement du contenu, sinon sombre.
+  const eyeAng = dir - Math.PI / 2;
+  const ex = x + Math.cos(eyeAng) * r * 0.45 + Math.cos(dir) * r * 0.15;
+  const ey = y + Math.sin(eyeAng) * r * 0.45 + Math.sin(dir) * r * 0.15;
+  context.fillStyle = eatingNow ? '#ff2222' : '#222222';
+  context.beginPath();
+  context.arc(ex, ey, Math.max(0.6, r * 0.16), 0, Math.PI * 2);
+  context.fill();
   context.restore();
 }
 
@@ -1567,6 +1825,24 @@ function drawFrameToContext(context, frameIndex, drawActiveSelectionBox = false,
   if (opts.shapePreview) {
     drawShape(context, opts.shapePreview);
   }
+
+  // Preview du Pacman en cours de création : trajet départ→arrivée + cercle.
+  if (opts.pacmanPreview) {
+    const pp = opts.pacmanPreview;
+    context.save();
+    context.strokeStyle = '#ffe14d';
+    context.globalAlpha = 0.6;
+    context.beginPath();
+    context.moveTo(pp.x1, pp.y1);
+    context.lineTo(pp.x2, pp.y2);
+    context.stroke();
+    context.globalAlpha = 1;
+    context.fillStyle = '#ffe14d';
+    context.beginPath();
+    context.arc(pp.x2, pp.y2, pp.size || 6, 0, Math.PI * 2);
+    context.fill();
+    context.restore();
+  }
 }
 
 function renderCanvas() {
@@ -1575,7 +1851,8 @@ function renderCanvas() {
   // 1. Draw logical scene to offscreen backbuffer
   drawFrameToContext(offCtx, currentFrameIndex, false, {
     onionSkin: onionSkinEnabled && !isPlaying,
-    shapePreview: shapePreview
+    shapePreview: shapePreview,
+    pacmanPreview: pacmanPreview
   });
   
   // 2. Read logical pixels
@@ -1598,14 +1875,11 @@ function renderCanvas() {
       let g = imgData[idx+1];
       let b = imgData[idx+2];
       
-      // Enhance contrast of "off" LEDs
-      if (r === 5 && g === 5 && b === 5) {
-        r = 15; g = 15; b = 15; // Unused, we check actual rgb from #050505 background
-      }
-      
+      if (r < 12 && g < 12 && b < 12) continue;
+
       const cx = x * scaleX + scaleX / 2;
       const cy = y * scaleY + scaleY / 2;
-      
+
       ctx.beginPath();
       ctx.arc(cx, cy, radius, 0, Math.PI * 2);
       ctx.fillStyle = `rgb(${r},${g},${b})`;
@@ -1648,11 +1922,11 @@ function renderCanvas() {
           ctx.strokeRect(hx - hSize/2, hy - hSize/2, hSize, hSize);
         };
 
-        // Resize handles : seulement pour text/image et seulement si rotation = 0
+        // Resize handles : pour text/image/pacman et seulement si rotation = 0
         // (resize sur item rotaté nécessiterait une logique de delta dans le repère
         // local, hors scope ici).
         const noRotation = !it.rotation;
-        if (noRotation && (it.type === 'text' || it.type === 'image')) {
+        if (noRotation && (it.type === 'text' || it.type === 'image' || it.type === 'pacman')) {
           drawHandle(corners[0].x, corners[0].y); // tl
           drawHandle(corners[1].x, corners[1].y); // tr
           drawHandle(corners[2].x, corners[2].y); // br
@@ -1964,7 +2238,7 @@ function applyTextTool() {
   if (!text) return;
 
   pushUndo();
-  const color = textColor.value;
+  const color = pencilColor.value;
   const size = parseInt(textSize.value) || 16;
   const x = parseInt(textX.value) || 0;
   const y = parseInt(textY.value) || 16;
