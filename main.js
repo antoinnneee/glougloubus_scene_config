@@ -1600,7 +1600,7 @@ function drawPacman(context, item) {
     if (!d) continue;
     const isBg = d[0] <= 12 && d[1] <= 12 && d[2] <= 12; // fond #050505 + tolérance
     if (!isBg) {
-      eaten.push({ x: p.x, y: p.y, f: p.f, color: `rgb(${d[0]},${d[1]},${d[2]})` });
+      eaten.push({ x: p.x, y: p.y, f: p.f, size: p.size || r, color: `rgb(${d[0]},${d[1]},${d[2]})` });
       // Dernier point = position courante : mord-il du contenu en ce moment ?
       if (i === trail.length - 1 && f >= animStartF && f <= animEndF) eatingNow = true;
     }
@@ -1620,34 +1620,41 @@ function drawPacman(context, item) {
   // 3. Mange la trace. Le rendu est SANS ÉTAT (recalculé entièrement à chaque
   //    frame) : pour que rien ne "réapparaisse" quand la bouche se rouvre, la
   //    zone mangée doit être MONOTONE croissante. On érode donc en deux temps :
-  //    a) couloir plein et continu pour tout le trajet déjà parcouru (sauf le
-  //       dernier point) → tout ce qui est DERRIÈRE le Pacman est mangé pour de
-  //       bon, bouche ouverte ou fermée ;
+  //    a) couloir continu pour tout le trajet déjà parcouru (sauf le dernier
+  //       point) → tout ce qui est DERRIÈRE le Pacman est mangé pour de bon ;
   //    b) la forme du CORPS (disque privé du coin "bouche") à la position
   //       courante → le corps mange, et seule la bouche encore ouverte laisse
   //       voir ce qui sera croqué. À la frame suivante ce point devient "passé"
-  //       et le couloir plein le mange définitivement.
+  //       et le couloir le mange définitivement.
+  //    Chaque point du couloir est mangé au rayon QU'AVAIT le Pacman à cette
+  //    frame-là (la taille peut être animée → manger au rayon courant
+  //    effacerait des pixels jamais touchés par le Pacman quand il était petit).
   if (trail.length > 0) {
     context.save();
     context.globalAlpha = 1;
     context.fillStyle = PACMAN_BG;
-    context.strokeStyle = PACMAN_BG;
-    context.lineWidth = r * 2;
-    context.lineCap = 'round';
-    context.lineJoin = 'round';
-    // a) couloir plein pour trail[0 .. n-2] (les positions déjà dépassées)
+    // a) couloir : un disque par position passée + sous-échantillonnage fin
+    //    entre elles (couloir continu même si le Pacman va vite), au rayon
+    //    interpolé localement. behind = nb de positions déjà dépassées.
     const behind = trail.length - 1;
-    if (behind === 1) {
+    if (behind >= 1) {
       context.beginPath();
-      context.arc(trail[0].x, trail[0].y, r, 0, Math.PI * 2);
+      const disk = (cx, cy, rr) => { context.moveTo(cx + rr, cy); context.arc(cx, cy, rr, 0, Math.PI * 2); };
+      for (let i = 0; i < behind; i++) {
+        const a = trail[i];
+        disk(a.x, a.y, a.size);
+        if (i + 1 < behind) {
+          const b = trail[i + 1];
+          const steps = Math.ceil(Math.hypot(b.x - a.x, b.y - a.y));
+          for (let s = 1; s < steps; s++) {
+            const t = s / steps;
+            disk(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.size + (b.size - a.size) * t);
+          }
+        }
+      }
       context.fill();
-    } else if (behind >= 2) {
-      context.beginPath();
-      context.moveTo(trail[0].x, trail[0].y);
-      for (let i = 1; i < behind; i++) context.lineTo(trail[i].x, trail[i].y);
-      context.stroke();
     }
-    // b) forme du corps (disque - bouche) à la position courante
+    // b) forme du corps (disque - bouche) à la position courante, rayon courant
     const cur = trail[trail.length - 1];
     context.beginPath();
     if (mouthHalf > 0.001) {
@@ -1674,7 +1681,7 @@ function drawPacman(context, item) {
       // Point de ponte réparti dans le disque mangé (et pas seulement au
       // centre) : angle + rayon pseudo-aléatoires.
       const sAng = pacmanRand(seed + 3) * Math.PI * 2;
-      const sRad = pacmanRand(seed + 5) * r;
+      const sRad = pacmanRand(seed + 5) * (e.size || r);
       const sx = e.x + Math.cos(sAng) * sRad;
       const sy = e.y + Math.sin(sAng) * sRad;
       const vx = (pacmanRand(seed) - 0.5) * 0.6;
@@ -2350,9 +2357,9 @@ async function exportToBin() {
 
         if (physicalLedIndex >= 0 && physicalLedIndex < totalPixels) {
           const byteIdx = physicalLedIndex * 3;
-          frameBytes[byteIdx]     = imageData[pixelIdx];     // R
+          frameBytes[byteIdx]     = imageData[pixelIdx + 2]; // B (panel is BGR)
           frameBytes[byteIdx + 1] = imageData[pixelIdx + 1]; // G
-          frameBytes[byteIdx + 2] = imageData[pixelIdx + 2]; // B
+          frameBytes[byteIdx + 2] = imageData[pixelIdx];     // R (panel is BGR)
         }
       }
     }
@@ -2495,9 +2502,9 @@ async function streamToBle() {
 
         if (physicalLedIndex >= 0 && physicalLedIndex < totalPixels) {
           const byteIdx = physicalLedIndex * 3;
-          frameBytes[byteIdx]     = imageData[pixelIdx];     // R
+          frameBytes[byteIdx]     = imageData[pixelIdx + 2]; // B (panel is BGR)
           frameBytes[byteIdx + 1] = imageData[pixelIdx + 1]; // G
-          frameBytes[byteIdx + 2] = imageData[pixelIdx + 2]; // B
+          frameBytes[byteIdx + 2] = imageData[pixelIdx];     // R (panel is BGR)
         }
       }
     }

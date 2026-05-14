@@ -205,14 +205,17 @@ function materialize(obj, f) {
     const animEndF = xt.length ? xt[xt.length - 1].f : 0;
     out.animStartF = animStartF;
     out.animEndF = animEndF;
-    // Trace = une position par frame entière de animStartF à min(f, animEndF).
-    // C'est la zone que le Pacman a « mangée ».
+    // Trace = une position PAR frame entière de animStartF à min(f, animEndF),
+    // avec la TAILLE qu'avait le Pacman à cette frame-là (la taille peut être
+    // animée → le rendu doit manger au bon rayon le long du trajet, pas au
+    // rayon courant). C'est la zone que le Pacman a « mangée ».
     const trail = [];
     const lastF = Math.min(f, animEndF);
     for (let ff = animStartF; ff <= lastF; ff++) {
       trail.push({
         x: getValueAt(obj.tracks.x, ff, 0),
         y: getValueAt(obj.tracks.y, ff, 0),
+        size: getValueAt(obj.tracks.size, ff, 6),
         f: ff,
       });
     }
