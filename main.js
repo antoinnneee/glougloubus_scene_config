@@ -3321,11 +3321,40 @@ function initExtras() {
   if (fileLoadProject) fileLoadProject.addEventListener('change', handleLoadProjectFile);
   if (btnNewProject) btnNewProject.addEventListener('click', newProject);
 
-  // Tool buttons
+  // Tool buttons (select, pacman, pan — non-draw)
   if (toolButtons && toolButtons.length) {
     toolButtons.forEach(btn => {
       btn.addEventListener('click', () => setTool(btn.dataset.tool));
     });
+  }
+  // Draw tool unified button
+  if (btnDrawTool) {
+    btnDrawTool.addEventListener('click', () => {
+      if (DRAW_TOOLS.has(currentTool)) {
+        if (drawDropdown.hasAttribute('hidden')) {
+          openDrawDropdown();
+        } else {
+          closeDrawDropdown();
+        }
+      } else {
+        setTool(currentDrawSubTool);
+        closeDrawDropdown();
+      }
+    });
+    drawDropdown.querySelectorAll('[data-draw-tool]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setTool(btn.dataset.drawTool);
+        closeDrawDropdown();
+      });
+    });
+    document.addEventListener('pointerdown', (e) => {
+      if (!drawDropdown.hasAttribute('hidden') &&
+          !btnDrawTool.contains(e.target) &&
+          !drawDropdown.contains(e.target)) {
+        closeDrawDropdown();
+      }
+    }, { capture: true });
   }
   setTool('select');
 
