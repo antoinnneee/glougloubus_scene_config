@@ -1,11 +1,47 @@
-const WIDTH = 192;
-const HEIGHT = 32;
+import './style.css';
+import { WIDTH, HEIGHT, mapToLedIndex, hslToRgb } from './modules/led-mapping.js';
+import { applyEasing } from './modules/easing.js';
+import {
+  processImage,
+  buildPaletteMedianCut,
+  nearestPaletteIdx
+} from './modules/image-process.js';
+import { GifEncoder } from './modules/gif-encoder.js';
+import { initBottomSheet, sheetAutoOpen } from './modules/sheet.js';
+import {
+  SCENE_VERSION,
+  createEmptyProject,
+  createObject,
+  evaluateScene,
+  setKeyframe,
+  removeKeyframe,
+  setPropertyAtFrame,
+  setVisibleFrom,
+  getValueAt,
+  makeTextObject,
+  makeImageObject,
+  makeDrawingObject,
+  makeShapeObject,
+  makePacmanObject,
+} from './modules/scene.js';
+import { renderKeyframeEditor } from './modules/keyframe-editor.js';
+import { renderLayersPanel } from './modules/layers-panel.js';
+import { renderGlobalTimeline } from './modules/timeline-global.js';
 
 // --- DOM Elements ---
 const canvas = document.getElementById('led-canvas');
 const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
+// Plusieurs boutons play/pause peuvent coexister (topbar + timeline tab) — on
+// les adresse en bloc via leur classe partagée pour MAJ état/icône en sync.
 const btnPlayPause = document.getElementById('btn-play-pause');
+const playButtons = document.querySelectorAll('.play-btn');
+function setPlayButtonsState(playing) {
+  playButtons.forEach(b => {
+    b.innerText = playing ? 'Pause' : '▶';
+    b.classList.toggle('primary', !playing);
+  });
+}
 const inputFps = document.getElementById('fps-input');
 const btnClear = document.getElementById('btn-clear-canvas');
 
@@ -37,7 +73,6 @@ const imgScale = document.getElementById('img-scale');
 const btnApplyImage = document.getElementById('btn-apply-image');
 
 const textInput = document.getElementById('text-input');
-const textColor = document.getElementById('text-color');
 const textSize = document.getElementById('text-size');
 const textX = document.getElementById('text-x');
 const textY = document.getElementById('text-y');
@@ -47,24 +82,25 @@ const btnApplyText = document.getElementById('btn-apply-text');
 const selectionTools = document.getElementById('selection-tools');
 const btnDeleteItem = document.getElementById('btn-delete-item');
 
+// Pacman : panneau de propriétés (taille du rayon)
+const pacmanTools = document.getElementById('pacman-tools');
+const pacmanSize = document.getElementById('pacman-size');
+
 const btnTogglePencil = document.getElementById('btn-toggle-pencil');
 const pencilColor = document.getElementById('pencil-color');
 
-// Animation
-const animStartX = document.getElementById('anim-start-x');
-const animStartY = document.getElementById('anim-start-y');
-const animEndX = document.getElementById('anim-end-x');
-const animEndY = document.getElementById('anim-end-y');
-const animStartColor = document.getElementById('anim-start-color');
-const animEndColor = document.getElementById('anim-end-color');
-const animMode = document.getElementById('anim-mode');
-const animValue = document.getElementById('anim-value');
-const btnAnimSetStart = document.getElementById('btn-anim-set-start');
-const btnAnimSetEnd = document.getElementById('btn-anim-set-end');
-const btnAnimApplyStart = document.getElementById('btn-anim-apply-start');
-const btnAnimApplyEnd = document.getElementById('btn-anim-apply-end');
-const btnGenerateAnim = document.getElementById('btn-generate-anim');
-const animEasing = document.getElementById('anim-easing');
+// Layers (Phase 3 : panneau de calques)
+const layersListEl = document.getElementById('layers-list');
+const layersCountEl = document.getElementById('layers-count');
+const btnLayerUp = document.getElementById('btn-layer-up');
+const btnLayerDown = document.getElementById('btn-layer-down');
+const btnLayerDuplicate = document.getElementById('btn-layer-duplicate');
+const btnLayerDelete = document.getElementById('btn-layer-delete');
+const btnLayerGroup = document.getElementById('btn-layer-group');
+const btnLayerUngroup = document.getElementById('btn-layer-ungroup');
+
+// Animation (Phase 2 : éditeur de keyframes)
+const kfEditorEl = document.getElementById('kf-editor');
 const btnPresetScrollL = document.getElementById('btn-preset-scroll-left');
 const btnPresetScrollR = document.getElementById('btn-preset-scroll-right');
 const btnPresetBlink = document.getElementById('btn-preset-blink');
@@ -79,8 +115,14 @@ const btnLoadProject = document.getElementById('btn-load-project');
 const fileLoadProject = document.getElementById('file-load-project');
 const btnNewProject = document.getElementById('btn-new-project');
 
-// Tools selector (shapes / pencil / eyedropper / bucket)
+// Tools selector — non-draw buttons only (select, pacman, pan)
 const toolButtons = document.querySelectorAll('[data-tool]');
+// Unified draw tool button + dropdown
+const btnDrawTool = document.getElementById('btn-draw-tool');
+const drawDropdown = document.getElementById('draw-dropdown');
+const DRAW_TOOLS = new Set(['pencil', 'line', 'rect', 'rect-outline', 'ellipse', 'bucket', 'eyedropper']);
+const DRAW_TOOL_ICONS = { pencil: '✏️', line: '╱', rect: '▣', 'rect-outline': '▢', ellipse: '◯', bucket: '🪣', eyedropper: '💧' };
+let currentDrawSubTool = 'pencil';
 
 // Palette
 const paletteContainer = document.getElementById('palette-container');
@@ -88,7 +130,17 @@ const paletteContainer = document.getElementById('palette-container');
 // Snap / Onion / Fullscreen
 const snapSelect = document.getElementById('snap-select');
 const toggleOnion = document.getElementById('toggle-onion');
+const toggleSnapObjects = document.getElementById('toggle-snap-objects');
 const btnFullscreen = document.getElementById('btn-fullscreen');
+
+// Transforms (Phase 5)
+const propRotation = document.getElementById('prop-rotation');
+const btnRotReset = document.getElementById('btn-rot-reset');
+const btnFlipH = document.getElementById('btn-flip-h');
+const btnFlipV = document.getElementById('btn-flip-v');
+const btnDistH = document.getElementById('btn-dist-h');
+const btnDistV = document.getElementById('btn-dist-v');
+const alignButtons = document.querySelectorAll('[data-align]');
 const cursorCoords = document.getElementById('cursor-coords');
 const selectionInfo = document.getElementById('selection-info');
 const btnDeleteSelected = document.getElementById('btn-delete-selected');
@@ -110,29 +162,62 @@ const bleStatusBadge = document.getElementById('ble-status-badge');
 // Export GIF
 const btnExportGif = document.getElementById('btn-export-gif');
 
-// --- State ---
-// A frame is now an ARRAY of objects: { id, type, x, y, ...specificProps }
-let frames = [];
+// --- Constantes globales ---
+const AUTOSAVE_KEY = 'glougloubus-autosave-v3';
+const AUTOSAVE_TS_KEY = 'glougloubus-autosave-v3-ts';
+
+// --- State (Scene v3) ---
+// project.objects[] est la source de vérité. Chaque objet est global et porte
+// des keyframes par propriété. evaluateScene(project, f) retourne la liste
+// d'items à rasteriser pour la frame f. Plus de tableau frames[] qui se
+// dupliquait à chaque frame.
+let project = createEmptyProject({ width: WIDTH, height: HEIGHT, fps: 20, frameCount: 1 });
 let currentFrameIndex = 0;
 let isPlaying = false;
-let fps = 20;
 let playInterval = null;
 
 // Image cache — items stockent un imgId (string) au lieu d'un HTMLImageElement
-// pour pouvoir sérialiser frames en JSON (undo/redo, save/load, autosave).
+// pour pouvoir sérialiser project en JSON (undo/redo, save/load, autosave).
 const imageCache = new Map();       // imgId -> HTMLImageElement (pour draw)
-const imageDataUrls = new Map();    // imgId -> dataURL base64 (pour export/import)
+// imageDataUrls vit désormais dans project.imageDataUrls (sérialisé direct).
 
-// Undo / Redo
+// Undo / Redo (snapshots de project)
 const MAX_UNDO = 50;
 let undoStack = [];
 let redoStack = [];
 
-// Clipboard pour copy/paste d'item
+// Clipboard pour copy/paste d'objet (snapshot JSON)
 let clipboardItem = null;
 
-// Palette : 8 couleurs récentes (plus récente en premier)
-let recentColors = ['#ffffff', '#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff', '#ff8800'];
+// Helpers fps / recentColors : raccourcis sur project pour ne pas tout réécrire
+function getFps()          { return project.fps; }
+function setFps(v)         { project.fps = v; }
+function getRecentColors() { return project.recentColors; }
+
+// Items rasterisés pour la frame courante (cache court-terme dans renderCanvas /
+// getItemBounds). NB : ces items sont des SNAPSHOTS — modifier item.x ne change
+// rien dans project. Pour modifier, il faut passer par updateObjectAtFrame().
+function currentItems() { return evaluateScene(project, currentFrameIndex); }
+
+// Trouve l'objet source dans project.objects à partir d'un id (sourceId d'un item
+// matérialisé OU id direct d'un objet).
+function getObject(id) {
+  if (!id) return null;
+  return project.objects.find(o => o.id === id) || null;
+}
+
+// Met à jour une propriété d'un objet à la frame courante. Pour les propriétés
+// "statiques" (text, font, points, shape, imgId), MAJ obj.static. Pour les
+// propriétés animables, passe par setPropertyAtFrame.
+const STATIC_PROPS = new Set(['text', 'font', 'points', 'shape', 'imgId']);
+function updateObjectProp(obj, prop, value) {
+  if (!obj) return;
+  if (STATIC_PROPS.has(prop)) {
+    obj.static[prop] = value;
+  } else {
+    setPropertyAtFrame(obj, prop, currentFrameIndex, value);
+  }
+}
 
 // Snap & onion-skin
 let snapSize = 0;          // 0 = off, sinon 1, 8 ou 16
@@ -144,9 +229,47 @@ let viewPanX = 0;
 let viewPanY = 0;
 
 // Object Selection and Tool State
+// `selectedIds` est la source de vérité (Set d'ids). `selectedItemId` est un
+// cache du "primary" id (dernier ajouté à la sélection) pour les opérations
+// qui ne traitent qu'un seul objet (resize handles, keyframe editor, presets).
+let selectedIds = new Set();
 let selectedItemId = null;
-// 'select' | 'pencil' | 'eyedropper' | 'line' | 'rect' | 'rect-outline' | 'ellipse' | 'bucket'
+
+function syncPrimaryFromSet() {
+  if (selectedIds.size === 0) { selectedItemId = null; return; }
+  // Préserve le primary actuel s'il est toujours sélectionné, sinon prend le dernier ajouté
+  if (selectedItemId && selectedIds.has(selectedItemId)) return;
+  selectedItemId = [...selectedIds].pop();
+}
+function setSingleSelection(id) {
+  selectedIds.clear();
+  if (id) selectedIds.add(id);
+  selectedItemId = id || null;
+}
+function clearSelection() {
+  selectedIds.clear();
+  selectedItemId = null;
+}
+function addSelection(id) {
+  if (!id) return;
+  selectedIds.add(id);
+  selectedItemId = id; // le dernier ajouté devient primary
+}
+function removeFromSelection(id) {
+  selectedIds.delete(id);
+  if (selectedItemId === id) syncPrimaryFromSet();
+}
+function toggleSelection(id) {
+  if (!id) return;
+  if (selectedIds.has(id)) removeFromSelection(id);
+  else addSelection(id);
+}
+// 'select' | 'pencil' | 'eyedropper' | 'line' | 'rect' | 'rect-outline' | 'ellipse' | 'bucket' | 'pan'
 let currentTool = 'select';
+let isPanning = false;
+let panStartClientX = 0, panStartClientY = 0;
+let panStartViewX = 0, panStartViewY = 0;
+let prevToolBeforeSpace = null;
 let isDragging = false;
 let currentDrawingId = null;
 let dragStartX = 0;
@@ -155,6 +278,8 @@ let itemStartX = 0;
 let itemStartY = 0;
 // Preview shape en cours (line/rect/ellipse)
 let shapePreview = null;
+// Preview Pacman en cours (drag départ→arrivée avec l'outil pacman)
+let pacmanPreview = null;
 
 // Pinch multi-touch sur canvas : resize item ou zoom vue
 const canvasPointers = new Map();   // pointerId -> { x, y }
@@ -173,6 +298,12 @@ let resizeStartSize = 16;
 let resizeItemStartX = 0;
 let resizeItemStartY = 0;
 
+// Rotation drag state (Phase 5)
+let isRotating = false;
+let rotateStartAngleScreen = 0;   // angle (rad) du pointer par rapport au centre de l'item au pointerdown
+let rotateStartItemAngle = 0;     // valeur degrés du track rotation au pointerdown
+let rotateCenter = null;          // {x, y} en coords logiques
+
 // Offscreen canvas for thumbnail generation and hit testing text measurement
 const offCanvas = document.createElement('canvas');
 offCanvas.width = WIDTH;
@@ -184,13 +315,13 @@ function generateId() {
   return Math.random().toString(36).substring(2, 9);
 }
 
-// Deep clone des frames — les items sont full JSON-safe (imgId au lieu d'HTMLImageElement)
-function snapshotFrames() {
-  return JSON.parse(JSON.stringify(frames));
+// Snapshot du projet entier (JSON-safe : pas d'HTMLImageElement)
+function snapshotProject() {
+  return JSON.parse(JSON.stringify(project));
 }
 
 function pushUndo() {
-  undoStack.push(snapshotFrames());
+  undoStack.push(snapshotProject());
   if (undoStack.length > MAX_UNDO) undoStack.shift();
   redoStack.length = 0;
   updateUndoButtons();
@@ -199,20 +330,22 @@ function pushUndo() {
 
 function undo() {
   if (undoStack.length === 0) return;
-  redoStack.push(snapshotFrames());
-  frames = undoStack.pop();
-  if (currentFrameIndex >= frames.length) currentFrameIndex = frames.length - 1;
-  selectedItemId = null;
+  redoStack.push(snapshotProject());
+  project = undoStack.pop();
+  if (currentFrameIndex >= project.frameCount) currentFrameIndex = project.frameCount - 1;
+  if (currentFrameIndex < 0) currentFrameIndex = 0;
+  clearSelection();
   updateUI();
   updateUndoButtons();
 }
 
 function redo() {
   if (redoStack.length === 0) return;
-  undoStack.push(snapshotFrames());
-  frames = redoStack.pop();
-  if (currentFrameIndex >= frames.length) currentFrameIndex = frames.length - 1;
-  selectedItemId = null;
+  undoStack.push(snapshotProject());
+  project = redoStack.pop();
+  if (currentFrameIndex >= project.frameCount) currentFrameIndex = project.frameCount - 1;
+  if (currentFrameIndex < 0) currentFrameIndex = 0;
+  clearSelection();
   updateUI();
   updateUndoButtons();
 }
@@ -225,10 +358,11 @@ function updateUndoButtons() {
 function pushRecentColor(color) {
   if (!color) return;
   color = color.toLowerCase();
-  const idx = recentColors.indexOf(color);
-  if (idx !== -1) recentColors.splice(idx, 1);
-  recentColors.unshift(color);
-  recentColors = recentColors.slice(0, 8);
+  const list = project.recentColors;
+  const idx = list.indexOf(color);
+  if (idx !== -1) list.splice(idx, 1);
+  list.unshift(color);
+  project.recentColors = list.slice(0, 8);
   renderPalette();
 }
 
@@ -264,8 +398,7 @@ function showModal(title, message, showCancel = false) {
 
 // --- Initialization ---
 function init() {
-  // Start with one blank frame
-  frames.push([]);
+  // Project déjà initialisé avec frameCount=1
   updateUI();
 
   // Event Listeners
@@ -274,71 +407,17 @@ function init() {
   btnDelFrame.addEventListener('click', deleteFrame);
   btnClear.addEventListener('click', clearCurrentFrame);
 
-  btnPlayPause.addEventListener('click', togglePlay);
-  inputFps.addEventListener('change', (e) => { fps = parseInt(e.target.value) || 20; if(isPlaying) { stop(); play(); } });
+  playButtons.forEach(b => b.addEventListener('click', togglePlay));
+  inputFps.addEventListener('change', (e) => { setFps(parseInt(e.target.value) || 20); if(isPlaying) { stop(); play(); } });
 
   // Update button texts
   btnApplyImage.innerText = "Add Image";
   btnApplyText.innerText = "Add Text";
   btnApplyImage.addEventListener('click', applyImageTool);
   btnApplyText.addEventListener('click', applyTextTool);
-  btnGenerateAnim.addEventListener('click', generateAnimation);
-  
   btnConnectBle.addEventListener('click', connectBle);
   btnStreamBle.addEventListener('click', streamToBle);
-  
-  btnAnimSetStart.addEventListener('click', () => {
-    if (selectedItemId) {
-      const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
-      if (item) {
-        animStartX.value = item.x;
-        animStartY.value = item.y;
-        if (item.color) animStartColor.value = item.color;
-      }
-    }
-  });
-  
-  btnAnimSetEnd.addEventListener('click', () => {
-    if (selectedItemId) {
-      const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
-      if (item) {
-        animEndX.value = item.x;
-        animEndY.value = item.y;
-        if (item.color) animEndColor.value = item.color;
-      }
-    }
-  });
 
-  btnAnimApplyStart.addEventListener('click', () => {
-    if (selectedItemId) {
-      const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
-      if (item) {
-        pushUndo();
-        item.x = parseInt(animStartX.value) || 0;
-        item.y = parseInt(animStartY.value) || 0;
-        item.color = animStartColor.value;
-        renderCanvas();
-        updateTimelineThumb(currentFrameIndex);
-        populatePropertiesPanel(item);
-      }
-    }
-  });
-
-  btnAnimApplyEnd.addEventListener('click', () => {
-    if (selectedItemId) {
-      const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
-      if (item) {
-        pushUndo();
-        item.x = parseInt(animEndX.value) || 0;
-        item.y = parseInt(animEndY.value) || 0;
-        item.color = animEndColor.value;
-        renderCanvas();
-        updateTimelineThumb(currentFrameIndex);
-        populatePropertiesPanel(item);
-      }
-    }
-  });
-  
   btnDeleteItem.addEventListener('click', deleteSelectedItem);
   btnTogglePencil.addEventListener('click', togglePencilMode);
 
@@ -348,27 +427,58 @@ function init() {
   canvas.addEventListener('pointerup', handlePointerUp);
   canvas.addEventListener('pointercancel', handlePointerUp);
   
-  // Keyboard Delete
+  // Keyboard Delete + Space pan
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'Delete' || e.key === 'Backspace') {
-      const activeTag = document.activeElement.tagName.toLowerCase();
-      if (activeTag !== 'input' && activeTag !== 'textarea') {
-        if (selectedItemId) {
-          e.preventDefault();
-          deleteSelectedItem();
-        }
+    const activeTag = document.activeElement.tagName.toLowerCase();
+    if (activeTag === 'input' || activeTag === 'textarea') return;
+
+    if (e.code === 'Space' && !e.repeat) {
+      e.preventDefault();
+      if (currentTool !== 'pan') {
+        prevToolBeforeSpace = currentTool;
+        setTool('pan');
       }
+      return;
+    }
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      if (selectedItemId) {
+        e.preventDefault();
+        deleteSelectedItem();
+      }
+    }
+  });
+  window.addEventListener('keyup', (e) => {
+    if (e.code === 'Space' && prevToolBeforeSpace !== null) {
+      setTool(prevToolBeforeSpace);
+      prevToolBeforeSpace = null;
     }
   });
   
   // Property changes live update the selected item.
   // pushUndo au premier focus = 1 point d'undo par session d'édition (pas par frappe).
-  const propertyInputs = [textInput, textColor, textSize, textX, textY, textFont, imgX, imgY, imgScale];
+  const propertyInputs = [textInput, textSize, textX, textY, textFont, imgX, imgY, imgScale, pacmanSize];
   propertyInputs.forEach(el => {
     if (!el) return;
     el.addEventListener('input', updateSelectedItemProperties);
     el.addEventListener('focus', () => { if (selectedItemId) pushUndo(); });
   });
+
+  // pencilColor = couleur unifiée : met à jour l'item sélectionné (texte, dessin, shape) en live
+  if (pencilColor) {
+    pencilColor.addEventListener('focus', () => { if (selectedItemId) pushUndo(); });
+    pencilColor.addEventListener('input', () => {
+      const obj = getObject(selectedItemId);
+      if (!obj) return;
+      if (obj.type === 'text' || obj.type === 'drawing' || obj.type === 'shape') {
+        updateObjectProp(obj, 'color', pencilColor.value);
+        renderCanvas();
+      }
+    });
+    pencilColor.addEventListener('change', () => {
+      pushRecentColor(pencilColor.value);
+      if (selectedItemId) updateTimelineThumb(currentFrameIndex);
+    });
+  }
 
   // Init des fonctionnalités additionnelles
   initExtras();
@@ -377,12 +487,27 @@ function init() {
 // --- Interaction Logic ---
 function getCanvasCoords(event) {
   const rect = canvas.getBoundingClientRect();
-  // Map CSS coordinates to logic (192x32) coordinates
-  const scaleX = WIDTH / rect.width;
-  const scaleY = HEIGHT / rect.height;
+  // Le canvas a object-fit: contain → son contenu (192×32, ratio 6:1) est
+  // letterboxé à l'intérieur de l'élément quand le ratio de l'élément n'est
+  // pas pile 6:1 (cas réel : .canvas-container a un padding/border qui rend
+  // sa content box plus large que 6:1, donc letterbox horizontal).
+  const elemAspect = rect.width / rect.height;
+  const canvasAspect = WIDTH / HEIGHT;
+  let dispW, dispH, offsetX, offsetY;
+  if (elemAspect > canvasAspect) {
+    dispH = rect.height;
+    dispW = dispH * canvasAspect;
+    offsetX = (rect.width - dispW) / 2;
+    offsetY = 0;
+  } else {
+    dispW = rect.width;
+    dispH = dispW / canvasAspect;
+    offsetX = 0;
+    offsetY = (rect.height - dispH) / 2;
+  }
   return {
-    x: (event.clientX - rect.left) * scaleX,
-    y: (event.clientY - rect.top) * scaleY
+    x: (event.clientX - rect.left - offsetX) * (WIDTH / dispW),
+    y: (event.clientY - rect.top - offsetY) * (HEIGHT / dispH)
   };
 }
 
@@ -394,7 +519,9 @@ function getResizeHitRadius() {
 }
 
 function applySnap(v) {
-  return snapSize > 1 ? Math.round(v / snapSize) * snapSize : Math.round(v);
+  // Math.floor pour convertir une coord flottante en index de cellule LED.
+  // Math.round décalerait la moitié droite/basse d'une cellule vers la voisine.
+  return snapSize > 1 ? Math.floor(v / snapSize) * snapSize : Math.floor(v);
 }
 
 function handlePointerDown(e) {
@@ -408,28 +535,30 @@ function handlePointerDown(e) {
     isDragging = false;
     isResizing = false;
     resizeHandle = null;
-    currentDrawingId = null;
     // Supprime la dernière stroke du pinceau si elle vient d'être amorcée
-    if (currentTool === 'pencil' && frames[currentFrameIndex].length > 0) {
-      const last = frames[currentFrameIndex][frames[currentFrameIndex].length - 1];
-      if (last.type === 'drawing' && last.points.length <= 2) {
-        frames[currentFrameIndex].pop();
+    if (currentTool === 'pencil' && currentDrawingId) {
+      const obj = getObject(currentDrawingId);
+      if (obj && obj.static.points.length <= 2) {
+        project.objects = project.objects.filter(o => o.id !== currentDrawingId);
       }
     }
+    currentDrawingId = null;
     shapePreview = null;
+    pacmanPreview = null;
 
     const pts = [...canvasPointers.values()];
     pinchStartDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
 
-    const selItem = selectedItemId && frames[currentFrameIndex].find(i => i.id === selectedItemId);
-    if (selItem && (selItem.type === 'text' || selItem.type === 'image')) {
+    const selObj = getObject(selectedItemId);
+    if (selObj && (selObj.type === 'text' || selObj.type === 'image' || selObj.type === 'pacman')) {
       pinchMode = 'resize';
       pushUndo();
+      const it = currentItems().find(i => i.sourceId === selObj.id);
       pinchStartItem = {
-        size: selItem.size || 16,
-        scale: selItem.scale || 1,
-        x: selItem.x,
-        y: selItem.y
+        size: it && it.size != null ? it.size : 16,
+        scale: it && it.scale != null ? it.scale : 1,
+        x: it ? it.x : 0,
+        y: it ? it.y : 0
       };
     } else {
       pinchMode = 'zoom';
@@ -439,6 +568,16 @@ function handlePointerDown(e) {
     return;
   }
   if (canvasPointers.size > 2) return;
+
+  if (currentTool === 'pan') {
+    isPanning = true;
+    panStartClientX = e.clientX;
+    panStartClientY = e.clientY;
+    panStartViewX = viewPanX;
+    panStartViewY = viewPanY;
+    canvas.style.cursor = 'grabbing';
+    return;
+  }
 
   const raw = getCanvasCoords(e);
   const x = raw.x, y = raw.y;
@@ -462,6 +601,7 @@ function handlePointerDown(e) {
     bucketFillAt(Math.floor(x), Math.floor(y), pencilColor.value);
     renderCanvas();
     updateTimelineThumb(currentFrameIndex);
+    updateLayersPanel();
     return;
   }
 
@@ -480,11 +620,37 @@ function handlePointerDown(e) {
     return;
   }
 
-  // Resize handles
+  // Pacman tool : drag = point de départ → point d'arrivée du trajet
+  if (currentTool === 'pacman') {
+    isDragging = true;
+    pacmanPreview = { x1: x, y1: y, x2: x, y2: y, size: 6 };
+    renderCanvas();
+    return;
+  }
+
+  // Rotation handle (cercle au-dessus du bbox)
+  if (selectedItemId && selectedIds.size === 1) {
+    const it = currentItems().find(i => i.sourceId === selectedItemId);
+    if (it) {
+      const rh = getRotationHandlePoints(it);
+      const hHit = getResizeHitRadius();
+      if (Math.hypot(x - rh.handle.x, y - rh.handle.y) <= hHit) {
+        pushUndo();
+        isRotating = true;
+        const c = getItemCenter(it);
+        rotateCenter = c;
+        rotateStartAngleScreen = Math.atan2(y - c.y, x - c.x);
+        rotateStartItemAngle = it.rotation || 0;
+        return;
+      }
+    }
+  }
+
+  // Resize handles : seulement si rotation = 0 (handles dessinés uniquement dans ce cas)
   if (selectedItemId) {
-    const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
-    if (item && (item.type === 'text' || item.type === 'image')) {
-      const bounds = getItemBounds(item);
+    const it = currentItems().find(i => i.sourceId === selectedItemId);
+    if (it && !it.rotation && (it.type === 'text' || it.type === 'image' || it.type === 'pacman')) {
+      const bounds = getItemBounds(it);
       const hHit = getResizeHitRadius();
       const isHit = (hx, hy) => Math.abs(x - hx) <= hHit && Math.abs(y - hy) <= hHit;
 
@@ -500,10 +666,10 @@ function handlePointerDown(e) {
         dragStartY = y;
         resizeStartWidth = bounds.width;
         resizeStartHeight = bounds.height;
-        resizeStartScale = item.scale || 1.0;
-        resizeStartSize = item.size || 16;
-        resizeItemStartX = item.x;
-        resizeItemStartY = item.y;
+        resizeStartScale = it.scale || 1.0;
+        resizeStartSize = it.size || 16;
+        resizeItemStartX = it.x;
+        resizeItemStartY = it.y;
         return;
       }
     }
@@ -513,44 +679,97 @@ function handlePointerDown(e) {
     pushUndo();
     pushRecentColor(pencilColor.value);
     isDragging = true;
-    currentDrawingId = generateId();
-    frames[currentFrameIndex].push({
-      id: currentDrawingId,
-      type: 'drawing',
+    const obj = makeDrawingObject({
+      points: [{ x: Math.floor(x), y: Math.floor(y) }],
       color: pencilColor.value,
-      points: [{ x: Math.round(x), y: Math.round(y) }]
+      f: currentFrameIndex
     });
+    setVisibleFrom(obj, currentFrameIndex);
+    project.objects.push(obj);
+    currentDrawingId = obj.id;
     renderCanvas();
     updateTimelineThumb(currentFrameIndex);
+    updateLayersPanel();
     return;
   }
 
   const hitItem = findItemAtCoord(x, y);
+  const additive = e.shiftKey;
 
   if (hitItem) {
     pushUndo();
-    selectedItemId = hitItem.id;
-    isDragging = true;
-    dragStartX = x;
-    dragStartY = y;
-    itemStartX = hitItem.x;
-    itemStartY = hitItem.y;
+    if (additive) {
+      // Shift-click : toggle dans la sélection (sans démarrer un drag)
+      toggleSelection(hitItem.sourceId);
+    } else if (!selectedIds.has(hitItem.sourceId)) {
+      // Click sur un item non sélectionné : remplace la sélection
+      setSingleSelection(hitItem.sourceId);
+    }
+    // Si on click sur un item déjà sélectionné (et pas additive), on garde la
+    // sélection courante (utile pour drag groupé).
+
+    if (!additive) {
+      isDragging = true;
+      dragStartX = x;
+      dragStartY = y;
+      itemStartX = hitItem.x;
+      itemStartY = hitItem.y;
+      // Snapshot des positions de départ pour TOUS les objets sélectionnés
+      // (drag groupé : tous bougent ensemble du même delta).
+      captureGroupDragStart();
+    }
 
     if (hitItem.type === 'drawing') {
-      hitItem.originalPoints = JSON.parse(JSON.stringify(hitItem.points));
+      // Pour drawing : on bouge l'objet via tracks.x/y, points restent statiques
+      // dans obj.static.points. itemStartX/Y captent l'offset courant (track).
     } else if (hitItem.type === 'shape') {
-      hitItem.originalX1 = hitItem.x1; hitItem.originalY1 = hitItem.y1;
-      hitItem.originalX2 = hitItem.x2; hitItem.originalY2 = hitItem.y2;
+      const obj = getObject(hitItem.sourceId);
+      if (obj) {
+        obj._dragOriginX1 = hitItem.x1; obj._dragOriginY1 = hitItem.y1;
+        obj._dragOriginX2 = hitItem.x2; obj._dragOriginY2 = hitItem.y2;
+      }
     }
 
     populatePropertiesPanel(hitItem);
+  } else if (currentTool === 'select') {
+    // Drag dans le vide avec l'outil sélection : démarre une marquee selection
+    if (!additive) clearSelection();
+    marqueeStart = { x, y };
+    marqueeRect = { x1: x, y1: y, x2: x, y2: y };
+    marqueeBaseSelection = additive ? new Set(selectedIds) : new Set();
+    isDragging = true;
   } else {
-    selectedItemId = null;
+    if (!additive) clearSelection();
   }
 
   updateSelectionUI();
   renderCanvas();
 }
+
+// Capture la position de départ de chaque objet sélectionné pour permettre
+// un drag groupé (tous bougent ensemble). On stocke (x,y) ou (x1,y1,x2,y2) selon
+// le type. Réinitialisé à chaque pointerdown.
+let groupDragStarts = new Map(); // id -> { x, y } ou { x1, y1, x2, y2 }
+let primaryStartBounds = null;   // { x, y, width, height } du primary au pointerdown (pour snap-objets)
+function captureGroupDragStart() {
+  groupDragStarts.clear();
+  primaryStartBounds = null;
+  for (const id of selectedIds) {
+    const it = currentItems().find(i => i.sourceId === id);
+    if (!it) continue;
+    if (it.type === 'shape') {
+      groupDragStarts.set(id, { x1: it.x1, y1: it.y1, x2: it.x2, y2: it.y2 });
+    } else {
+      groupDragStarts.set(id, { x: it.x, y: it.y });
+    }
+    if (id === selectedItemId) primaryStartBounds = getItemBounds(it);
+  }
+}
+
+// État marquee selection (rectangle de sélection rubber-band)
+let marqueeStart = null;             // { x, y } en coords logiques
+let marqueeRect = null;              // { x1, y1, x2, y2 } courant
+let marqueeBaseSelection = null;     // Set d'ids présents au démarrage (additif Shift)
 
 function rgbToHex(r, g, b) {
   const h = (n) => n.toString(16).padStart(2, '0');
@@ -559,20 +778,17 @@ function rgbToHex(r, g, b) {
 
 function applyColorToActiveTool(hex) {
   pencilColor.value = hex;
-  textColor.value = hex;
-  const selItem = selectedItemId && frames[currentFrameIndex].find(i => i.id === selectedItemId);
-  if (selItem) {
-    if (selItem.type === 'text' || selItem.type === 'drawing' || selItem.type === 'shape') {
-      pushUndo();
-      selItem.color = hex;
-      renderCanvas();
-      updateTimelineThumb(currentFrameIndex);
-    }
+  const obj = getObject(selectedItemId);
+  if (obj && (obj.type === 'text' || obj.type === 'drawing' || obj.type === 'shape')) {
+    pushUndo();
+    updateObjectProp(obj, 'color', hex);
+    renderCanvas();
+    updateTimelineThumb(currentFrameIndex);
   }
 }
 
 // Flood-fill sur la représentation rasterisée de la frame courante.
-// Résultat stocké comme un item 'drawing' composé des pixels remplis.
+// Résultat stocké comme un objet 'drawing' composé des pixels remplis.
 function bucketFillAt(startX, startY, newColorHex) {
   if (startX < 0 || startX >= WIDTH || startY < 0 || startY >= HEIGHT) return;
   drawFrameToContext(offCtx, currentFrameIndex);
@@ -601,12 +817,9 @@ function bucketFillAt(startX, startY, newColorHex) {
     stack.push([x+1, y], [x-1, y], [x, y+1], [x, y-1]);
   }
   if (points.length === 0) return;
-  frames[currentFrameIndex].push({
-    id: generateId(),
-    type: 'drawing',
-    color: newColorHex,
-    points
-  });
+  const obj = makeDrawingObject({ points, color: newColorHex, f: currentFrameIndex });
+  setVisibleFrom(obj, currentFrameIndex);
+  project.objects.push(obj);
   pushRecentColor(newColorHex);
 }
 
@@ -623,14 +836,20 @@ function handlePointerMove(e) {
     const ratio = dist / (pinchStartDist || dist);
 
     if (pinchMode === 'resize') {
-      const item = selectedItemId && frames[currentFrameIndex].find(i => i.id === selectedItemId);
-      if (item && pinchStartItem) {
-        if (item.type === 'text') {
-          item.size = Math.max(1, Math.round(pinchStartItem.size * ratio));
-          if (textSize) textSize.value = item.size;
-        } else if (item.type === 'image') {
-          item.scale = Math.max(0.01, pinchStartItem.scale * ratio);
-          if (imgScale) imgScale.value = item.scale.toFixed(2);
+      const obj = getObject(selectedItemId);
+      if (obj && pinchStartItem) {
+        if (obj.type === 'text') {
+          const newSize = Math.max(1, Math.round(pinchStartItem.size * ratio));
+          updateObjectProp(obj, 'size', newSize);
+          if (textSize) textSize.value = newSize;
+        } else if (obj.type === 'image') {
+          const newScale = Math.max(0.01, pinchStartItem.scale * ratio);
+          updateObjectProp(obj, 'scale', newScale);
+          if (imgScale) imgScale.value = newScale.toFixed(2);
+        } else if (obj.type === 'pacman') {
+          const newR = Math.max(1, Math.min(32, Math.round((pinchStartItem.size || 6) * ratio)));
+          updateObjectProp(obj, 'size', newR);
+          if (pacmanSize) pacmanSize.value = newR;
         }
         renderCanvas();
       }
@@ -639,6 +858,13 @@ function handlePointerMove(e) {
       const cy = (pts[0].y + pts[1].y) / 2;
       setZoom((pinchStartZoom || viewZoom) * ratio, cx, cy);
     }
+    return;
+  }
+
+  if (isPanning) {
+    viewPanX = panStartViewX + (e.clientX - panStartClientX);
+    viewPanY = panStartViewY + (e.clientY - panStartClientY);
+    applyCanvasTransform();
     return;
   }
 
@@ -652,87 +878,169 @@ function handlePointerMove(e) {
     return;
   }
 
+  // Preview pendant drag du Pacman (départ→arrivée)
+  if (isDragging && pacmanPreview && currentTool === 'pacman') {
+    pacmanPreview.x2 = x;
+    pacmanPreview.y2 = y;
+    renderCanvas();
+    return;
+  }
+
+  // Drag du handle de rotation
+  if (isRotating && selectedItemId && rotateCenter) {
+    const obj = getObject(selectedItemId);
+    if (obj) {
+      const angleNow = Math.atan2(y - rotateCenter.y, x - rotateCenter.x);
+      let deg = rotateStartItemAngle + (angleNow - rotateStartAngleScreen) * 180 / Math.PI;
+      // Snap aux multiples de 15° si Shift
+      if (e.shiftKey) deg = Math.round(deg / 15) * 15;
+      // Normalise dans [-180, 180] pour rester lisible
+      deg = ((deg + 180) % 360 + 360) % 360 - 180;
+      updateObjectProp(obj, 'rotation', deg);
+      if (propRotation && document.activeElement !== propRotation) {
+        propRotation.value = (Math.round(deg * 10) / 10).toString();
+      }
+      renderCanvas();
+    }
+    return;
+  }
+
   if (isResizing && selectedItemId) {
     const dx = x - dragStartX;
     const dy = y - dragStartY;
-    const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
-    if (item) {
+    const obj = getObject(selectedItemId);
+    if (obj) {
        let currentWidth = resizeStartWidth;
-       
+       let newX = resizeItemStartX, newY = resizeItemStartY;
+
        if (resizeHandle === 'br') { currentWidth += dx; }
-       else if (resizeHandle === 'tl') { currentWidth -= dx; item.x = Math.round(resizeItemStartX + dx); item.y = Math.round(resizeItemStartY + dy); }
-       else if (resizeHandle === 'tr') { currentWidth += dx; item.y = Math.round(resizeItemStartY + dy); }
-       else if (resizeHandle === 'bl') { currentWidth -= dx; item.x = Math.round(resizeItemStartX + dx); }
-       
-       if (currentWidth < 2) currentWidth = 2; // Math.max(1) for scale division safety
-       
-       if (item.type === 'text') {
-          item.size = Math.max(1, Math.round(resizeStartSize * (currentWidth / Math.max(1, resizeStartWidth))));
-          textSize.value = item.size;
-          textX.value = item.x; 
-          textY.value = item.y;
-       } else if (item.type === 'image') {
-          item.scale = Math.max(0.01, resizeStartScale * (currentWidth / Math.max(1, resizeStartWidth)));
-          imgScale.value = item.scale.toFixed(2);
-          imgX.value = item.x; 
-          imgY.value = item.y;
+       else if (resizeHandle === 'tl') { currentWidth -= dx; newX = Math.round(resizeItemStartX + dx); newY = Math.round(resizeItemStartY + dy); }
+       else if (resizeHandle === 'tr') { currentWidth += dx; newY = Math.round(resizeItemStartY + dy); }
+       else if (resizeHandle === 'bl') { currentWidth -= dx; newX = Math.round(resizeItemStartX + dx); }
+
+       if (currentWidth < 2) currentWidth = 2;
+
+       if (obj.type === 'text') {
+          const newSize = Math.max(1, Math.round(resizeStartSize * (currentWidth / Math.max(1, resizeStartWidth))));
+          updateObjectProp(obj, 'size', newSize);
+          updateObjectProp(obj, 'x', newX);
+          updateObjectProp(obj, 'y', newY);
+          textSize.value = newSize;
+          textX.value = newX;
+          textY.value = newY;
+       } else if (obj.type === 'image') {
+          const newScale = Math.max(0.01, resizeStartScale * (currentWidth / Math.max(1, resizeStartWidth)));
+          updateObjectProp(obj, 'scale', newScale);
+          updateObjectProp(obj, 'x', newX);
+          updateObjectProp(obj, 'y', newY);
+          imgScale.value = newScale.toFixed(2);
+          imgX.value = newX;
+          imgY.value = newY;
+       } else if (obj.type === 'pacman') {
+          // Pacman = cercle centré sur (x,y) : le centre reste fixe, le rayon
+          // suit le curseur (n'importe quel handle de coin agrandit/réduit).
+          const newR = Math.max(1, Math.min(32, Math.round(
+            Math.max(Math.abs(x - resizeItemStartX), Math.abs(y - resizeItemStartY))
+          )));
+          updateObjectProp(obj, 'size', newR);
+          if (pacmanSize) pacmanSize.value = newR;
        }
-       
+
        renderCanvas();
     }
     return;
   }
   
   if (!isDragging) return;
-  
+
   if (currentTool === 'pencil' && currentDrawingId) {
-    const item = frames[currentFrameIndex].find(i => i.id === currentDrawingId);
-    if (item) {
-      item.points.push({ x: Math.round(x), y: Math.round(y) });
+    const obj = getObject(currentDrawingId);
+    if (obj) {
+      obj.static.points.push({ x: Math.floor(x), y: Math.floor(y) });
       renderCanvas();
     }
     return;
   }
-  
-  if (!selectedItemId) return;
 
-  const dx = x - dragStartX;
-  const dy = y - dragStartY;
+  // Marquee selection : MAJ rect et selectedIds en temps réel
+  if (marqueeStart) {
+    marqueeRect.x2 = x;
+    marqueeRect.y2 = y;
+    updateMarqueeSelection();
+    renderCanvas();
+    return;
+  }
 
-  const frameItems = frames[currentFrameIndex];
-  const item = frameItems.find(i => i.id === selectedItemId);
-  if (item) {
-    if (item.type === 'text' || item.type === 'image') {
-      item.x = applySnap(itemStartX + dx);
-      item.y = applySnap(itemStartY + dy);
+  if (selectedIds.size === 0) return;
 
-      if (item.type === 'text') {
-        textX.value = item.x;
-        textY.value = item.y;
-      } else if (item.type === 'image') {
-        imgX.value = item.x;
-        imgY.value = item.y;
+  let dx = x - dragStartX;
+  let dy = y - dragStartY;
+
+  // Snap aux objets non-sélectionnés. Projeté = bbox au pointerdown + (dx, dy).
+  if (snapToObjectsEnabled && primaryStartBounds) {
+    const moved = {
+      x: primaryStartBounds.x + dx,
+      y: primaryStartBounds.y + dy,
+      width: primaryStartBounds.width,
+      height: primaryStartBounds.height,
+    };
+    const snap = computeObjectSnap(moved);
+    dx += snap.dx;
+    dy += snap.dy;
+  }
+
+  const dxSnap = snapSize > 1 ? (applySnap(dx) - applySnap(0)) : dx;
+  const dySnap = snapSize > 1 ? (applySnap(dy) - applySnap(0)) : dy;
+
+  // Drag groupé : tous les sélectionnés bougent ensemble du même delta
+  // (par rapport à leurs positions de départ capturées au pointerdown).
+  for (const id of selectedIds) {
+    const obj = getObject(id);
+    if (!obj || obj.locked) continue;
+    const start = groupDragStarts.get(id);
+    if (!start) continue;
+
+    if (obj.type === 'text' || obj.type === 'image' || obj.type === 'drawing' || obj.type === 'pacman') {
+      const newX = applySnap(start.x + dx);
+      const newY = applySnap(start.y + dy);
+      updateObjectProp(obj, 'x', newX);
+      updateObjectProp(obj, 'y', newY);
+      if (id === selectedItemId) {
+        if (obj.type === 'text')  { textX.value = newX; textY.value = newY; }
+        if (obj.type === 'image') { imgX.value = newX;  imgY.value = newY; }
       }
-    } else if (item.type === 'drawing' && item.originalPoints) {
-      const rdx = applySnap(dx) - applySnap(0);
-      const rdy = applySnap(dy) - applySnap(0);
-      item.points = item.originalPoints.map(pt => ({
-        x: Math.round(pt.x + (snapSize > 1 ? rdx : dx)),
-        y: Math.round(pt.y + (snapSize > 1 ? rdy : dy))
-      }));
-    } else if (item.type === 'shape' && item.originalX1 !== undefined) {
-      const rdx = applySnap(dx) - applySnap(0);
-      const rdy = applySnap(dy) - applySnap(0);
-      const useDx = snapSize > 1 ? rdx : dx;
-      const useDy = snapSize > 1 ? rdy : dy;
-      item.x1 = Math.round(item.originalX1 + useDx);
-      item.y1 = Math.round(item.originalY1 + useDy);
-      item.x2 = Math.round(item.originalX2 + useDx);
-      item.y2 = Math.round(item.originalY2 + useDy);
+    } else if (obj.type === 'shape') {
+      updateObjectProp(obj, 'x1', Math.round(start.x1 + dxSnap));
+      updateObjectProp(obj, 'y1', Math.round(start.y1 + dySnap));
+      updateObjectProp(obj, 'x2', Math.round(start.x2 + dxSnap));
+      updateObjectProp(obj, 'y2', Math.round(start.y2 + dySnap));
     }
   }
 
   renderCanvas();
+}
+
+// Pendant un drag marquee, recalcule selectedIds = base ∪ items intersectant le rect.
+function updateMarqueeSelection() {
+  if (!marqueeRect) return;
+  const minX = Math.min(marqueeRect.x1, marqueeRect.x2);
+  const maxX = Math.max(marqueeRect.x1, marqueeRect.x2);
+  const minY = Math.min(marqueeRect.y1, marqueeRect.y2);
+  const maxY = Math.max(marqueeRect.y1, marqueeRect.y2);
+  const inside = new Set(marqueeBaseSelection || []);
+  const items = currentItems();
+  for (const it of items) {
+    const obj = getObject(it.sourceId);
+    if (!obj || obj.locked) continue;
+    const b = getItemBounds(it);
+    if (b.width === 0 && b.height === 0) continue;
+    // Intersection rectangles
+    const ix = b.x < maxX && (b.x + b.width) > minX;
+    const iy = b.y < maxY && (b.y + b.height) > minY;
+    if (ix && iy) inside.add(it.sourceId);
+  }
+  selectedIds = inside;
+  syncPrimaryFromSet();
 }
 
 function handlePointerUp(e) {
@@ -740,6 +1048,12 @@ function handlePointerUp(e) {
     canvas.releasePointerCapture(e.pointerId);
   }
   canvasPointers.delete(e.pointerId);
+
+  if (isPanning) {
+    isPanning = false;
+    canvas.style.cursor = 'grab';
+    return;
+  }
 
   // Fin de pinch
   if (pinchMode && canvasPointers.size < 2) {
@@ -753,25 +1067,79 @@ function handlePointerUp(e) {
     return;
   }
 
-  // Commit shape preview en item réel
+  // Commit shape preview en objet réel
   if (shapePreview) {
     pushUndo();
     pushRecentColor(shapePreview.color);
-    const committed = { ...shapePreview };
-    delete committed.id;
-    committed.id = generateId();
-    frames[currentFrameIndex].push(committed);
+    const obj = makeShapeObject({
+      shape: shapePreview.shape,
+      x1: shapePreview.x1, y1: shapePreview.y1,
+      x2: shapePreview.x2, y2: shapePreview.y2,
+      color: shapePreview.color,
+      f: currentFrameIndex
+    });
+    setVisibleFrom(obj, currentFrameIndex);
+    project.objects.push(obj);
     shapePreview = null;
     renderCanvas();
     updateTimelineThumb(currentFrameIndex);
+    updateLayersPanel();
+  }
+
+  // Commit Pacman preview en objet réel : 2 keyframes x/y (départ → arrivée).
+  // Le déplacement dure 20 frames par défaut ; on étend frameCount si besoin
+  // pour que la keyframe de fin tienne dans la timeline.
+  if (pacmanPreview) {
+    pushUndo();
+    const fStart = currentFrameIndex;
+    let fEnd = currentFrameIndex + 20;
+    if (fEnd > project.frameCount - 1) project.frameCount = fEnd + 1;
+    const obj = makePacmanObject({
+      x1: pacmanPreview.x1, y1: pacmanPreview.y1,
+      x2: pacmanPreview.x2, y2: pacmanPreview.y2,
+      fStart, fEnd, size: pacmanPreview.size,
+    });
+    project.objects.push(obj);
+    pacmanPreview = null;
+    isDragging = false;
+    setSingleSelection(obj.id);
+    renderCanvas();
+    updateTimelineThumb(currentFrameIndex);
+    updateSelectionUI();
+    return;
+  }
+
+  // Commit marquee selection
+  if (marqueeStart) {
+    marqueeStart = null;
+    marqueeRect = null;
+    marqueeBaseSelection = null;
+    isDragging = false;
+    renderCanvas();
+    updateSelectionUI();
+    return;
+  }
+
+  // Nettoie les pseudo-props de drag posées sur les objets shape sélectionnés
+  for (const id of selectedIds) {
+    const obj = getObject(id);
+    if (obj && obj._dragOriginX1 !== undefined) {
+      delete obj._dragOriginX1;
+      delete obj._dragOriginY1;
+      delete obj._dragOriginX2;
+      delete obj._dragOriginY2;
+    }
   }
 
   isDragging = false;
   isResizing = false;
   resizeHandle = null;
+  isRotating = false;
+  rotateCenter = null;
   currentDrawingId = null;
+  groupDragStarts.clear();
 
-  if (selectedItemId) {
+  if (selectedIds.size > 0) {
     renderCanvas();
     updateTimelineThumb(currentFrameIndex);
     updateSelectionUI();
@@ -779,13 +1147,17 @@ function handlePointerUp(e) {
 }
 
 function findItemAtCoord(cx, cy) {
-  const frameItems = frames[currentFrameIndex];
-  // Iterate backwards to hit-test top-most items first
-  for (let i = frameItems.length - 1; i >= 0; i--) {
-    const item = frameItems[i];
+  const items = currentItems();
+  // Itération backwards pour hit-test top-most en premier
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i];
+    const obj = getObject(item.sourceId);
+    if (obj && obj.locked) continue;
+    // Inverse rotation/flip : on teste le clic dans le repère local de l'item
+    const local = inverseItemTransform(item, cx, cy);
     const bounds = getItemBounds(item);
-    if (cx >= bounds.x && cx <= bounds.x + bounds.width &&
-        cy >= bounds.y && cy <= bounds.y + bounds.height) {
+    if (local.x >= bounds.x && local.x <= bounds.x + bounds.width &&
+        local.y >= bounds.y && local.y <= bounds.y + bounds.height) {
       return item;
     }
   }
@@ -817,12 +1189,13 @@ function getItemBounds(item) {
     };
   } else if (item.type === 'drawing') {
     if (!item.points || item.points.length === 0) return {x:0,y:0,width:0,height:0};
+    const ox = item.x || 0, oy = item.y || 0;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     item.points.forEach(pt => {
-      minX = Math.min(minX, pt.x);
-      minY = Math.min(minY, pt.y);
-      maxX = Math.max(maxX, pt.x);
-      maxY = Math.max(maxY, pt.y);
+      minX = Math.min(minX, pt.x + ox);
+      minY = Math.min(minY, pt.y + oy);
+      maxX = Math.max(maxX, pt.x + ox);
+      maxY = Math.max(maxY, pt.y + oy);
     });
     return { x: minX - 1, y: minY - 1, width: maxX - minX + 3, height: maxY - minY + 3 };
   } else if (item.type === 'shape') {
@@ -830,6 +1203,10 @@ function getItemBounds(item) {
     const minX = Math.min(x1, x2), minY = Math.min(y1, y2);
     const maxX = Math.max(x1, x2), maxY = Math.max(y1, y2);
     return { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 };
+  } else if (item.type === 'pacman') {
+    // x/y = centre, size = rayon → bbox carré centré.
+    const r = item.size || 6;
+    return { x: item.x - r, y: item.y - r, width: 2 * r, height: 2 * r };
   }
   return { x:0, y:0, width:0, height:0 };
 }
@@ -837,7 +1214,7 @@ function getItemBounds(item) {
 function populatePropertiesPanel(item) {
   if (item.type === 'text') {
     textInput.value = item.text;
-    textColor.value = item.color;
+    pencilColor.value = item.color;
     textSize.value = item.size;
     textX.value = item.x;
     textY.value = item.y;
@@ -846,28 +1223,33 @@ function populatePropertiesPanel(item) {
     imgX.value = item.x;
     imgY.value = item.y;
     imgScale.value = item.scale;
+  } else if (item.type === 'pacman') {
+    if (pacmanSize) pacmanSize.value = Math.round(item.size || 6);
+  } else if (item.type === 'drawing' || item.type === 'shape') {
+    if (item.color) pencilColor.value = item.color;
   }
 }
 
 function updateSelectedItemProperties(e) {
-  if (!selectedItemId) return;
-  const frameItems = frames[currentFrameIndex];
-  const item = frameItems.find(i => i.id === selectedItemId);
-  if (!item) return;
+  const obj = getObject(selectedItemId);
+  if (!obj) return;
 
-  if (item.type === 'text') {
-    item.text = textInput.value;
-    item.color = textColor.value;
-    item.size = parseInt(textSize.value) || 16;
-    item.x = parseInt(textX.value) || 0;
-    item.y = parseInt(textY.value) || 16;
-    item.font = textFont.value;
-  } else if (item.type === 'image') {
-    item.x = parseInt(imgX.value) || 0;
-    item.y = parseInt(imgY.value) || 0;
-    item.scale = parseFloat(imgScale.value) || 1.0;
+  if (obj.type === 'text') {
+    updateObjectProp(obj, 'text',  textInput.value);
+    updateObjectProp(obj, 'color', pencilColor.value);
+    updateObjectProp(obj, 'size',  parseInt(textSize.value) || 16);
+    updateObjectProp(obj, 'x',     parseInt(textX.value) || 0);
+    updateObjectProp(obj, 'y',     parseInt(textY.value) || 16);
+    updateObjectProp(obj, 'font',  textFont.value);
+  } else if (obj.type === 'image') {
+    updateObjectProp(obj, 'x',     parseInt(imgX.value) || 0);
+    updateObjectProp(obj, 'y',     parseInt(imgY.value) || 0);
+    updateObjectProp(obj, 'scale', parseFloat(imgScale.value) || 1.0);
+  } else if (obj.type === 'pacman') {
+    const s = Math.max(1, Math.min(32, parseInt(pacmanSize.value) || 6));
+    updateObjectProp(obj, 'size', s);
   }
-  
+
   renderCanvas();
   updateTimelineThumb(currentFrameIndex);
 }
@@ -876,31 +1258,246 @@ function updateSelectionUI() {
   const has = !!selectedItemId;
   selectionTools.hidden = !has;
   if (btnDeleteSelected) btnDeleteSelected.disabled = !has;
+  let selType = null;
+  if (has) {
+    const it = currentItems().find(i => i.sourceId === selectedItemId);
+    if (it) {
+      selType = it.type;
+      sheetAutoOpen(it);
+      // Sync rotation input avec l'objet courant
+      if (propRotation && document.activeElement !== propRotation) {
+        propRotation.value = (Math.round((it.rotation || 0) * 10) / 10).toString();
+      }
+      // Panneau Pacman : visible + synchronisé seulement pour un Pacman
+      if (it.type === 'pacman' && pacmanSize && document.activeElement !== pacmanSize) {
+        pacmanSize.value = Math.round(it.size || 6);
+      }
+    }
+  }
+  if (pacmanTools) pacmanTools.hidden = selType !== 'pacman';
+  updateKeyframeEditor();
+  updateLayersPanel();
+  // Re-render la timeline globale : les lanes dépendent de l'objet sélectionné
+  renderTimeline();
+}
+
+// --- Layers panel (Phase 3) ---
+function updateLayersPanel() {
+  if (!layersListEl) return;
+  renderLayersPanel(layersListEl, {
+    project,
+    selectedIds,
+    callbacks: {
+      onSelect(id, modifier) {
+        if (modifier) {
+          toggleSelection(id);
+        } else {
+          setSingleSelection(id);
+        }
+        const it = currentItems().find(i => i.sourceId === selectedItemId);
+        if (it) populatePropertiesPanel(it);
+        renderCanvas();
+        updateSelectionUI();
+      },
+      onToggleVisible(id) {
+        const obj = getObject(id);
+        if (!obj) return;
+        pushUndo();
+        obj.visible = !obj.visible;
+        renderCanvas();
+        updateLayersPanel();
+        updateTimelineThumb(currentFrameIndex);
+      },
+      onToggleLock(id) {
+        const obj = getObject(id);
+        if (!obj) return;
+        pushUndo();
+        obj.locked = !obj.locked;
+        updateLayersPanel();
+      },
+      onRename(id, name) {
+        const obj = getObject(id);
+        if (!obj) return;
+        pushUndo();
+        obj.name = name;
+        updateLayersPanel();
+      },
+      onReorder(fromIdx, toIdx) {
+        if (fromIdx === toIdx) return;
+        if (fromIdx < 0 || fromIdx >= project.objects.length) return;
+        if (toIdx < 0 || toIdx >= project.objects.length) return;
+        pushUndo();
+        const [obj] = project.objects.splice(fromIdx, 1);
+        project.objects.splice(toIdx, 0, obj);
+        renderCanvas();
+        updateLayersPanel();
+        updateTimelineThumb(currentFrameIndex);
+      },
+      onDuplicate(id) {
+        const obj = getObject(id);
+        if (!obj) return;
+        pushUndo();
+        const copy = JSON.parse(JSON.stringify(obj));
+        copy.id = generateId();
+        if (copy.tracks && copy.tracks.x) {
+          const curX = getValueAt(copy.tracks.x, currentFrameIndex, 0);
+          setKeyframe(copy, 'x', currentFrameIndex, curX + 2);
+        }
+        if (copy.tracks && copy.tracks.y) {
+          const curY = getValueAt(copy.tracks.y, currentFrameIndex, 0);
+          setKeyframe(copy, 'y', currentFrameIndex, curY + 2);
+        }
+        const origIdx = project.objects.findIndex(o => o.id === id);
+        project.objects.splice(origIdx + 1, 0, copy);
+        setSingleSelection(copy.id);
+        renderCanvas();
+        updateSelectionUI();
+        updateTimelineThumb(currentFrameIndex);
+      },
+      onDelete(id) {
+        pushUndo();
+        project.objects = project.objects.filter(o => o.id !== id);
+        if (selectedIds.has(id)) removeFromSelection(id);
+        renderCanvas();
+        updateSelectionUI();
+        updateTimelineThumb(currentFrameIndex);
+      },
+      onSendToTop(id) {
+        const idx = project.objects.findIndex(o => o.id === id);
+        if (idx === -1 || idx === project.objects.length - 1) return;
+        pushUndo();
+        const [obj] = project.objects.splice(idx, 1);
+        project.objects.push(obj);
+        renderCanvas();
+        updateLayersPanel();
+        updateTimelineThumb(currentFrameIndex);
+      },
+      onSendToBottom(id) {
+        const idx = project.objects.findIndex(o => o.id === id);
+        if (idx <= 0) return;
+        pushUndo();
+        const [obj] = project.objects.splice(idx, 1);
+        project.objects.unshift(obj);
+        renderCanvas();
+        updateLayersPanel();
+        updateTimelineThumb(currentFrameIndex);
+      },
+    },
+  });
+  if (layersCountEl) {
+    const n = project.objects.length;
+    layersCountEl.textContent = `${n} objet${n > 1 ? 's' : ''}`;
+  }
+  // Toolbar buttons : actifs uniquement si une sélection existe
+  const has = !!selectedItemId;
+  [btnLayerUp, btnLayerDown, btnLayerDuplicate, btnLayerDelete].forEach(b => {
+    if (b) b.disabled = !has;
+  });
+}
+
+function updateKeyframeEditor() {
+  if (!kfEditorEl) return;
+  const obj = getObject(selectedItemId);
+  renderKeyframeEditor(kfEditorEl, {
+    obj,
+    currentFrame: currentFrameIndex,
+    frameCount: project.frameCount,
+    callbacks: {
+      onAdd(prop, f) {
+        if (!obj) return;
+        const it = currentItems().find(i => i.sourceId === obj.id);
+        const v = (it && it[prop] !== undefined) ? it[prop] : (obj.tracks[prop]?.[0]?.v ?? 0);
+        pushUndo();
+        setKeyframe(obj, prop, f, v);
+        renderCanvas();
+        updateKeyframeEditor();
+      },
+      onRemove(prop, f) {
+        if (!obj) return;
+        pushUndo();
+        removeKeyframe(obj, prop, f);
+        renderCanvas();
+        updateKeyframeEditor();
+      },
+      onSeek(f) {
+        currentFrameIndex = Math.max(0, Math.min(project.frameCount - 1, f));
+        renderCanvas();
+        renderTimeline();
+        updateKeyframeEditor();
+      },
+      onMove(prop, oldF, newF) {
+        if (!obj) return;
+        const track = obj.tracks[prop];
+        if (!track) return;
+        const kf = track.find(k => k.f === oldF);
+        if (!kf) return;
+        const { v, easing } = kf;
+        pushUndo();
+        removeKeyframe(obj, prop, oldF);
+        setKeyframe(obj, prop, newF, v, easing);
+        renderCanvas();
+        updateKeyframeEditor();
+      },
+      onEasing(prop, f, easing) {
+        if (!obj) return;
+        const track = obj.tracks[prop];
+        if (!track) return;
+        const kf = track.find(k => k.f === f);
+        if (!kf) return;
+        pushUndo();
+        kf.easing = easing;
+        renderCanvas();
+        updateKeyframeEditor();
+      },
+    },
+  });
 }
 
 function deleteSelectedItem() {
-  if (!selectedItemId || isPlaying) return;
+  if (selectedIds.size === 0 || isPlaying) return;
   pushUndo();
-  const frameItems = frames[currentFrameIndex];
-  frames[currentFrameIndex] = frameItems.filter(i => i.id !== selectedItemId);
-  selectedItemId = null;
+  const toRemove = new Set(selectedIds);
+  project.objects = project.objects.filter(o => !toRemove.has(o.id));
+  clearSelection();
   updateSelectionUI();
   renderCanvas();
   updateTimelineThumb(currentFrameIndex);
 }
 
+function openDrawDropdown() {
+  const r = btnDrawTool.getBoundingClientRect();
+  drawDropdown.style.top = `${r.bottom + 4}px`;
+  drawDropdown.style.left = `${r.left}px`;
+  drawDropdown.removeAttribute('hidden');
+  drawDropdown.querySelectorAll('[data-draw-tool]').forEach(b => {
+    b.classList.toggle('active', b.dataset.drawTool === currentDrawSubTool);
+  });
+}
+function closeDrawDropdown() {
+  drawDropdown.setAttribute('hidden', '');
+}
+
 function setTool(tool) {
   currentTool = tool;
   if (tool !== 'select') {
-    selectedItemId = null;
+    clearSelection();
     updateSelectionUI();
     renderCanvas();
   }
   // Cursor
-  canvas.style.cursor = tool === 'select' ? 'default' : 'crosshair';
-  // Active state sur les boutons
+  canvas.style.cursor = tool === 'select' ? 'default' : tool === 'pan' ? 'grab' : 'crosshair';
+  // Active state sur les boutons non-draw
   if (toolButtons) {
     toolButtons.forEach(b => b.classList.toggle('active', b.dataset.tool === tool));
+  }
+  // Active state + icône du bouton draw unifié
+  if (btnDrawTool) {
+    const isDrawTool = DRAW_TOOLS.has(tool);
+    btnDrawTool.classList.toggle('active', isDrawTool);
+    if (isDrawTool) {
+      currentDrawSubTool = tool;
+      btnDrawTool.textContent = DRAW_TOOL_ICONS[tool] || '✏️';
+    }
   }
   // Compat bouton pencil legacy
   if (btnTogglePencil) {
@@ -917,15 +1514,37 @@ function togglePencilMode() {
 
 // --- Core Rendering ---
 function updateUI() {
-  if (currentFrameIndex >= frames.length) currentFrameIndex = frames.length - 1;
-  if (currentFrameIndex < 0 && frames.length > 0) currentFrameIndex = 0;
-  selectedItemId = null; // deselect on frame change
+  if (project.frameCount < 1) project.frameCount = 1;
+  if (currentFrameIndex >= project.frameCount) currentFrameIndex = project.frameCount - 1;
+  if (currentFrameIndex < 0) currentFrameIndex = 0;
+  clearSelection(); // deselect on frame change
   updateSelectionUI();
   renderCanvas();
   renderTimeline();
 }
 
 function drawItem(context, item) {
+  const opacity = item.opacity != null ? item.opacity : 1;
+  if (opacity <= 0) return;
+  context.save();
+  if (opacity < 1) context.globalAlpha = opacity;
+
+  // Rotation + flip : transformations appliquées autour du centre du bbox
+  // unrotaté/unflippé. La rotation vient du track (degrés), flipX/flipY sont
+  // statiques.
+  const rot = item.rotation || 0;
+  const fx = item.flipX ? -1 : 1;
+  const fy = item.flipY ? -1 : 1;
+  // Le Pacman applique sa propre rotation en interne (sur le corps uniquement,
+  // pas sur la trace mangée ni les miettes qui vivent en espace monde).
+  if (item.type !== 'pacman' && (rot !== 0 || fx !== 1 || fy !== 1)) {
+    const c = getItemCenter(item);
+    context.translate(c.x, c.y);
+    if (rot) context.rotate(rot * Math.PI / 180);
+    if (fx !== 1 || fy !== 1) context.scale(fx, fy);
+    context.translate(-c.x, -c.y);
+  }
+
   if (item.type === 'text') {
     context.fillStyle = item.color;
     const font = item.font || '"JetBrains Mono", monospace';
@@ -937,10 +1556,235 @@ function drawItem(context, item) {
     if (img) context.drawImage(img, item.x, item.y, img.width * item.scale, img.height * item.scale);
   } else if (item.type === 'drawing') {
     context.fillStyle = item.color;
-    item.points.forEach(pt => context.fillRect(pt.x, pt.y, 1, 1));
+    const ox = item.x || 0, oy = item.y || 0;
+    item.points.forEach(pt => context.fillRect(pt.x + ox, pt.y + oy, 1, 1));
   } else if (item.type === 'shape') {
     drawShape(context, item);
+  } else if (item.type === 'pacman') {
+    drawPacman(context, item);
   }
+  context.restore();
+}
+
+// Couleur de fond de drawFrameToContext — le Pacman « mange » en repeignant
+// cette couleur par-dessus les calques situés sous lui dans l'ordre z.
+const PACMAN_BG = '#050505';
+
+// Hash déterministe seed -> [0,1). Les miettes doivent être reproductibles à
+// l'identique d'un rendu à l'autre (preview, thumbnails, export).
+function pacmanRand(seed) {
+  const x = Math.sin(seed * 127.1 + 311.7) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+// Dessine un Pacman + sa trace mangée + ses miettes. item est enrichi par
+// materialize() : { x, y, size, color, f, animStartF, animEndF, trail[] }.
+// Tout est fonction pure de item.f → rendu déterministe.
+function drawPacman(context, item) {
+  const { x, y, f } = item;
+  const r = item.size || 6;
+  const trail = item.trail || [];
+  const animStartF = item.animStartF ?? 0;
+  const animEndF = item.animEndF ?? 0;
+
+  // 1. Échantillonne la couleur sous chaque point de trace AVANT d'effacer :
+  //    sert à colorer les miettes et à savoir s'il mord vraiment du contenu.
+  const eaten = []; // points où il y avait autre chose que le fond
+  let eatingNow = false;
+  for (let i = 0; i < trail.length; i++) {
+    const p = trail[i];
+    const px = Math.max(0, Math.min(WIDTH - 1, Math.round(p.x)));
+    const py = Math.max(0, Math.min(HEIGHT - 1, Math.round(p.y)));
+    let d;
+    try { d = context.getImageData(px, py, 1, 1).data; } catch { d = null; }
+    if (!d) continue;
+    const isBg = d[0] <= 12 && d[1] <= 12 && d[2] <= 12; // fond #050505 + tolérance
+    if (!isBg) {
+      eaten.push({ x: p.x, y: p.y, f: p.f, color: `rgb(${d[0]},${d[1]},${d[2]})` });
+      // Dernier point = position courante : mord-il du contenu en ce moment ?
+      if (i === trail.length - 1 && f >= animStartF && f <= animEndF) eatingNow = true;
+    }
+  }
+
+  // 2. Oriente le Pacman : direction du déplacement + rotation (track). La
+  //    bouche s'ouvre/ferme (chomp) selon la frame.
+  let dir = 0; // angle (rad), 0 = vers la droite
+  if (trail.length >= 2) {
+    const a = trail[trail.length - 2], b = trail[trail.length - 1];
+    if (b.x !== a.x || b.y !== a.y) dir = Math.atan2(b.y - a.y, b.x - a.x);
+  }
+  dir += (item.rotation || 0) * Math.PI / 180;
+  const MAX_MOUTH = 0.9; // demi-angle max de la bouche (rad)
+  const mouthHalf = MAX_MOUTH * (0.5 + 0.5 * Math.sin(f * 0.9));
+
+  // 3. Mange la trace. Le rendu est SANS ÉTAT (recalculé entièrement à chaque
+  //    frame) : pour que rien ne "réapparaisse" quand la bouche se rouvre, la
+  //    zone mangée doit être MONOTONE croissante. On érode donc en deux temps :
+  //    a) couloir plein et continu pour tout le trajet déjà parcouru (sauf le
+  //       dernier point) → tout ce qui est DERRIÈRE le Pacman est mangé pour de
+  //       bon, bouche ouverte ou fermée ;
+  //    b) la forme du CORPS (disque privé du coin "bouche") à la position
+  //       courante → le corps mange, et seule la bouche encore ouverte laisse
+  //       voir ce qui sera croqué. À la frame suivante ce point devient "passé"
+  //       et le couloir plein le mange définitivement.
+  if (trail.length > 0) {
+    context.save();
+    context.globalAlpha = 1;
+    context.fillStyle = PACMAN_BG;
+    context.strokeStyle = PACMAN_BG;
+    context.lineWidth = r * 2;
+    context.lineCap = 'round';
+    context.lineJoin = 'round';
+    // a) couloir plein pour trail[0 .. n-2] (les positions déjà dépassées)
+    const behind = trail.length - 1;
+    if (behind === 1) {
+      context.beginPath();
+      context.arc(trail[0].x, trail[0].y, r, 0, Math.PI * 2);
+      context.fill();
+    } else if (behind >= 2) {
+      context.beginPath();
+      context.moveTo(trail[0].x, trail[0].y);
+      for (let i = 1; i < behind; i++) context.lineTo(trail[i].x, trail[i].y);
+      context.stroke();
+    }
+    // b) forme du corps (disque - bouche) à la position courante
+    const cur = trail[trail.length - 1];
+    context.beginPath();
+    if (mouthHalf > 0.001) {
+      context.moveTo(cur.x, cur.y);
+      context.arc(cur.x, cur.y, r, dir + mouthHalf, dir - mouthHalf + Math.PI * 2);
+      context.closePath();
+    } else {
+      context.arc(cur.x, cur.y, r, 0, Math.PI * 2);
+    }
+    context.fill();
+    context.restore();
+  }
+
+  // 4. Miettes : tombent doucement depuis chaque pixel mangé puis s'estompent.
+  const CRUMB_LIFE = 16;   // durée de vie (frames)
+  const GRAVITY = 0.05;    // accélération verticale douce (px/frame²)
+  const CRUMBS_PER = 2;    // miettes générées par pixel mangé
+  context.save();
+  for (const e of eaten) {
+    const age = f - e.f;
+    if (age < 0 || age >= CRUMB_LIFE) continue;
+    for (let k = 0; k < CRUMBS_PER; k++) {
+      const seed = e.f * 17.3 + k * 101.7 + Math.round(e.x) * 0.13;
+      // Point de ponte réparti dans le disque mangé (et pas seulement au
+      // centre) : angle + rayon pseudo-aléatoires.
+      const sAng = pacmanRand(seed + 3) * Math.PI * 2;
+      const sRad = pacmanRand(seed + 5) * r;
+      const sx = e.x + Math.cos(sAng) * sRad;
+      const sy = e.y + Math.sin(sAng) * sRad;
+      const vx = (pacmanRand(seed) - 0.5) * 0.6;
+      const vy = pacmanRand(seed + 7) * 0.25;
+      const cx = sx + vx * age;
+      const cy = sy + vy * age + 0.5 * GRAVITY * age * age;
+      if (cy >= HEIGHT) continue;
+      context.globalAlpha = Math.max(0, 1 - age / CRUMB_LIFE);
+      context.fillStyle = e.color;
+      context.fillRect(Math.round(cx), Math.round(cy), 1, 1);
+    }
+  }
+  context.restore();
+
+  // 5. Corps : disque jaune avec la bouche animée découpée, dessiné par-dessus
+  //    la zone qu'il vient de manger (dir / mouthHalf calculés à l'étape 2).
+  context.save();
+  context.fillStyle = item.color || '#ffe14d';
+  context.beginPath();
+  context.moveTo(x, y);
+  context.arc(x, y, r, dir + mouthHalf, dir - mouthHalf + Math.PI * 2);
+  context.closePath();
+  context.fill();
+
+  // 6. Œil : rouge quand il mord réellement du contenu, sinon sombre.
+  const eyeAng = dir - Math.PI / 2;
+  const ex = x + Math.cos(eyeAng) * r * 0.45 + Math.cos(dir) * r * 0.15;
+  const ey = y + Math.sin(eyeAng) * r * 0.45 + Math.sin(dir) * r * 0.15;
+  context.fillStyle = eatingNow ? '#ff2222' : '#222222';
+  context.beginPath();
+  context.arc(ex, ey, Math.max(0.6, r * 0.16), 0, Math.PI * 2);
+  context.fill();
+  context.restore();
+}
+
+// Centre du bbox unrotaté d'un item (point pivot pour rotation/flip)
+function getItemCenter(item) {
+  const b = getItemBounds(item);
+  return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+}
+
+// Inverse-transforme un point (px, py) du repère "écran logique" vers le repère
+// local de l'item (annule rotation + flip autour du centre du bbox unrotaté).
+// Utilisé par hit-test pour cliquer sur un item rotaté/flippé.
+function inverseItemTransform(item, px, py) {
+  const rot = item.rotation || 0;
+  const fx = item.flipX ? -1 : 1;
+  const fy = item.flipY ? -1 : 1;
+  if (rot === 0 && fx === 1 && fy === 1) return { x: px, y: py };
+  const c = getItemCenter(item);
+  let x = px - c.x, y = py - c.y;
+  if (rot) {
+    const r = -rot * Math.PI / 180;
+    const cs = Math.cos(r), sn = Math.sin(r);
+    const xr = x * cs - y * sn;
+    const yr = x * sn + y * cs;
+    x = xr; y = yr;
+  }
+  if (fx !== 1) x = -x;
+  if (fy !== 1) y = -y;
+  return { x: x + c.x, y: y + c.y };
+}
+
+// Distance (en unités logiques) entre le bord supérieur du bbox et le handle
+// de rotation à l'écran. Convertie depuis ~26 CSS px.
+function getRotationHandleOffset() {
+  const rect = canvas.getBoundingClientRect();
+  return Math.max(2, 26 * (WIDTH / Math.max(1, rect.width)));
+}
+
+// Renvoie deux points en coords logiques :
+//   anchor — milieu de l'arête supérieure du bbox rotaté
+//   handle — position du cercle handle (anchor + offset le long de la normale "haut")
+function getRotationHandlePoints(item) {
+  const b = getItemBounds(item);
+  const c = getItemCenter(item);
+  const rot = (item.rotation || 0) * Math.PI / 180;
+  const cs = Math.cos(rot), sn = Math.sin(rot);
+  const off = getRotationHandleOffset();
+  // Milieu top du bbox unrotaté
+  const topMidLocal = { x: 0, y: -b.height / 2 };
+  // Direction "vers le haut" en world space après rotation
+  const ax = topMidLocal.x * cs - topMidLocal.y * sn;
+  const ay = topMidLocal.x * sn + topMidLocal.y * cs;
+  const anchor = { x: c.x + ax, y: c.y + ay };
+  // Direction normalisée vers l'extérieur (depuis center vers anchor) + offset
+  const len = Math.hypot(ax, ay) || 1;
+  const ux = ax / len, uy = ay / len;
+  const handle = { x: anchor.x + ux * off, y: anchor.y + uy * off };
+  return { anchor, handle };
+}
+
+// Renvoie les 4 coins du bbox APRÈS rotation+flip (pour dessiner le cadre de
+// sélection à l'écran). Ordre : tl, tr, br, bl.
+function getRotatedCorners(item) {
+  const b = getItemBounds(item);
+  const c = getItemCenter(item);
+  const rot = (item.rotation || 0) * Math.PI / 180;
+  const cs = Math.cos(rot), sn = Math.sin(rot);
+  // Le flip ne change pas la forme du bbox extérieur (pas la peine de l'appliquer)
+  const corners = [
+    { x: b.x,           y: b.y },
+    { x: b.x + b.width, y: b.y },
+    { x: b.x + b.width, y: b.y + b.height },
+    { x: b.x,           y: b.y + b.height },
+  ];
+  return corners.map(p => {
+    const dx = p.x - c.x, dy = p.y - c.y;
+    return { x: c.x + dx * cs - dy * sn, y: c.y + dx * sn + dy * cs };
+  });
 }
 
 function drawShape(context, item) {
@@ -999,7 +1843,7 @@ function drawPixelEllipse(context, x1, y1, x2, y2, color) {
 }
 
 function drawFrameToContext(context, frameIndex, drawActiveSelectionBox = false, opts = {}) {
-  const items = frames[frameIndex] || [];
+  const items = evaluateScene(project, frameIndex);
 
   // Fond
   context.fillStyle = '#050505';
@@ -1007,7 +1851,7 @@ function drawFrameToContext(context, frameIndex, drawActiveSelectionBox = false,
 
   // Onion skin : frame précédente en fantôme
   if (opts.onionSkin && frameIndex > 0) {
-    const prev = frames[frameIndex - 1] || [];
+    const prev = evaluateScene(project, frameIndex - 1);
     context.save();
     context.globalAlpha = 0.3;
     prev.forEach(it => drawItem(context, it));
@@ -1018,7 +1862,7 @@ function drawFrameToContext(context, frameIndex, drawActiveSelectionBox = false,
     drawItem(context, item);
 
     // Legacy Selection Box (thumbnails only)
-    if (drawActiveSelectionBox && item.id === selectedItemId) {
+    if (drawActiveSelectionBox && item.sourceId === selectedItemId) {
       const bounds = getItemBounds(item);
       context.strokeStyle = '#3b82f6';
       context.lineWidth = 1;
@@ -1032,15 +1876,34 @@ function drawFrameToContext(context, frameIndex, drawActiveSelectionBox = false,
   if (opts.shapePreview) {
     drawShape(context, opts.shapePreview);
   }
+
+  // Preview du Pacman en cours de création : trajet départ→arrivée + cercle.
+  if (opts.pacmanPreview) {
+    const pp = opts.pacmanPreview;
+    context.save();
+    context.strokeStyle = '#ffe14d';
+    context.globalAlpha = 0.6;
+    context.beginPath();
+    context.moveTo(pp.x1, pp.y1);
+    context.lineTo(pp.x2, pp.y2);
+    context.stroke();
+    context.globalAlpha = 1;
+    context.fillStyle = '#ffe14d';
+    context.beginPath();
+    context.arc(pp.x2, pp.y2, pp.size || 6, 0, Math.PI * 2);
+    context.fill();
+    context.restore();
+  }
 }
 
 function renderCanvas() {
-  if (frames.length === 0) return;
+  if (project.frameCount < 1) return;
 
   // 1. Draw logical scene to offscreen backbuffer
   drawFrameToContext(offCtx, currentFrameIndex, false, {
     onionSkin: onionSkinEnabled && !isPlaying,
-    shapePreview: shapePreview
+    shapePreview: shapePreview,
+    pacmanPreview: pacmanPreview
   });
   
   // 2. Read logical pixels
@@ -1063,14 +1926,11 @@ function renderCanvas() {
       let g = imgData[idx+1];
       let b = imgData[idx+2];
       
-      // Enhance contrast of "off" LEDs
-      if (r === 5 && g === 5 && b === 5) {
-        r = 15; g = 15; b = 15; // Unused, we check actual rgb from #050505 background
-      }
-      
+      if (r < 12 && g < 12 && b < 12) continue;
+
       const cx = x * scaleX + scaleX / 2;
       const cy = y * scaleY + scaleY / 2;
-      
+
       ctx.beginPath();
       ctx.arc(cx, cy, radius, 0, Math.PI * 2);
       ctx.fillStyle = `rgb(${r},${g},${b})`;
@@ -1079,149 +1939,259 @@ function renderCanvas() {
   }
   
   // 6. Draw vector Selection UI on top of the LED grid
-  if (!isPlaying && selectedItemId) {
-    const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
-    if (item) {
-      const bounds = getItemBounds(item); // logical bounds
-      
-      const sx = bounds.x * scaleX;
-      const sy = bounds.y * scaleY;
-      const sw = bounds.width * scaleX;
-      const sh = bounds.height * scaleY;
-      
-      ctx.strokeStyle = '#3b82f6';
-      ctx.lineWidth = 2;
-      ctx.setLineDash([6, 6]);
-      ctx.strokeRect(sx, sy, sw, sh);
-      ctx.setLineDash([]); // Reset
-      
-      // Draw 4 resize handles — taille ~18 CSS px quelle que soit la taille d'affichage
-      if (item.type === 'text' || item.type === 'image') {
-        const cssWidth = canvas.getBoundingClientRect().width || canvas.width;
-        const bufferPerCss = canvas.width / cssWidth;
+  if (!isPlaying && selectedIds.size > 0) {
+    const items = currentItems();
+    const singleSelection = selectedIds.size === 1;
+    const cssWidth = canvas.getBoundingClientRect().width || canvas.width;
+    const bufferPerCss = canvas.width / cssWidth;
+    for (const it of items) {
+      if (!selectedIds.has(it.sourceId)) continue;
+      const isPrimary = it.sourceId === selectedItemId;
+      const corners = getRotatedCorners(it).map(p => ({ x: p.x * scaleX, y: p.y * scaleY }));
+
+      // Cadre rotaté (4 coins)
+      ctx.strokeStyle = isPrimary ? '#3b82f6' : '#60a5fa';
+      ctx.lineWidth = isPrimary ? 2 : 1.5;
+      ctx.setLineDash(isPrimary ? [6, 6] : [3, 4]);
+      ctx.beginPath();
+      ctx.moveTo(corners[0].x, corners[0].y);
+      ctx.lineTo(corners[1].x, corners[1].y);
+      ctx.lineTo(corners[2].x, corners[2].y);
+      ctx.lineTo(corners[3].x, corners[3].y);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Handles uniquement si sélection unique
+      if (singleSelection) {
         const hSize = 18 * bufferPerCss;
-        ctx.fillStyle = '#ffffff';
-        ctx.strokeStyle = '#000000';
-        ctx.lineWidth = Math.max(2, 2 * bufferPerCss);
         const drawHandle = (hx, hy) => {
+          ctx.fillStyle = '#ffffff';
+          ctx.strokeStyle = '#000000';
+          ctx.lineWidth = Math.max(2, 2 * bufferPerCss);
           ctx.fillRect(hx - hSize/2, hy - hSize/2, hSize, hSize);
           ctx.strokeRect(hx - hSize/2, hy - hSize/2, hSize, hSize);
         };
-        drawHandle(sx, sy); // top-left
-        drawHandle(sx + sw, sy); // top-right
-        drawHandle(sx, sy + sh); // bottom-left
-        drawHandle(sx + sw, sy + sh); // bottom-right
+
+        // Resize handles : pour text/image/pacman et seulement si rotation = 0
+        // (resize sur item rotaté nécessiterait une logique de delta dans le repère
+        // local, hors scope ici).
+        const noRotation = !it.rotation;
+        if (noRotation && (it.type === 'text' || it.type === 'image' || it.type === 'pacman')) {
+          drawHandle(corners[0].x, corners[0].y); // tl
+          drawHandle(corners[1].x, corners[1].y); // tr
+          drawHandle(corners[2].x, corners[2].y); // br
+          drawHandle(corners[3].x, corners[3].y); // bl
+        }
+
+        // Handle de rotation : cercle au-dessus du milieu de l'arête supérieure,
+        // à 22 CSS px de distance le long de la normale "haut" du bbox rotaté.
+        const rh = getRotationHandlePoints(it);
+        const anchorScreen = { x: rh.anchor.x * scaleX, y: rh.anchor.y * scaleY };
+        const handleScreen = { x: rh.handle.x * scaleX, y: rh.handle.y * scaleY };
+        ctx.strokeStyle = '#3b82f6';
+        ctx.lineWidth = Math.max(1.5, 1.5 * bufferPerCss);
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.moveTo(anchorScreen.x, anchorScreen.y);
+        ctx.lineTo(handleScreen.x, handleScreen.y);
+        ctx.stroke();
+        const rR = 9 * bufferPerCss;
+        ctx.fillStyle = '#3b82f6';
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = Math.max(2, 2 * bufferPerCss);
+        ctx.beginPath();
+        ctx.arc(handleScreen.x, handleScreen.y, rR, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
       }
+    }
+  }
+
+  // 7. Marquee selection rectangle (pendant drag dans le vide)
+  if (!isPlaying && marqueeRect) {
+    const minX = Math.min(marqueeRect.x1, marqueeRect.x2) * scaleX;
+    const maxX = Math.max(marqueeRect.x1, marqueeRect.x2) * scaleX;
+    const minY = Math.min(marqueeRect.y1, marqueeRect.y2) * scaleY;
+    const maxY = Math.max(marqueeRect.y1, marqueeRect.y2) * scaleY;
+    ctx.fillStyle = 'rgba(59,130,246,0.12)';
+    ctx.fillRect(minX, minY, maxX - minX, maxY - minY);
+    ctx.strokeStyle = '#3b82f6';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 4]);
+    ctx.strokeRect(minX, minY, maxX - minX, maxY - minY);
+    ctx.setLineDash([]);
+  }
+}
+
+// Phase 6 : la frame strip est devenue une vraie timeline scrubbable. Il n'y
+// a plus de thumbs à mettre à jour individuellement — un re-render complet
+// de la timeline suffit (ce qu'on faisait déjà à chaque changement majeur via
+// updateUI). Helper conservé pour ne pas casser les call sites existants.
+function updateTimelineThumb(_index) {
+  renderTimeline();
+}
+
+function renderTimeline() {
+  if (!timelineContainer) return;
+  const selectedObj = getObject(selectedItemId);
+  renderGlobalTimeline(timelineContainer, {
+    project,
+    currentFrame: currentFrameIndex,
+    selectedObj,
+    callbacks: {
+      onSeek(f) {
+        const target = Math.max(0, Math.min(project.frameCount - 1, f));
+        if (target === currentFrameIndex) return;
+        currentFrameIndex = target;
+        if (isPlaying) togglePlay();
+        renderCanvas();
+        renderTimeline();
+        updateKeyframeEditor();
+      },
+      onAddKf(prop, f) {
+        const obj = getObject(selectedItemId);
+        if (!obj) return;
+        // Valeur par défaut au moment t = valeur courante de la track au temps f
+        const cur = getValueAt(obj.tracks[prop], f, undefined);
+        // Fallback : la valeur visible à f côté rendu (pour size/scale/etc.)
+        let v = cur;
+        if (v === undefined) {
+          const it = currentItems().find(i => i.sourceId === obj.id);
+          v = it && it[prop] !== undefined ? it[prop] : 0;
+        }
+        pushUndo();
+        setKeyframe(obj, prop, f, v);
+        renderCanvas();
+        renderTimeline();
+        updateKeyframeEditor();
+      },
+      onMoveKf(prop, oldF, newF) {
+        const obj = getObject(selectedItemId);
+        if (!obj) return;
+        const track = obj.tracks[prop];
+        if (!track) return;
+        const kf = track.find(k => k.f === oldF);
+        if (!kf) return;
+        const { v, easing } = kf;
+        pushUndo();
+        removeKeyframe(obj, prop, oldF);
+        setKeyframe(obj, prop, newF, v, easing);
+        renderCanvas();
+        renderTimeline();
+        updateKeyframeEditor();
+      },
+      onRemoveKf(prop, f) {
+        const obj = getObject(selectedItemId);
+        if (!obj) return;
+        pushUndo();
+        removeKeyframe(obj, prop, f);
+        renderCanvas();
+        renderTimeline();
+        updateKeyframeEditor();
+      },
+      onSetEasing(prop, f, easing) {
+        const obj = getObject(selectedItemId);
+        if (!obj) return;
+        const track = obj.tracks[prop];
+        if (!track) return;
+        const kf = track.find(k => k.f === f);
+        if (!kf) return;
+        pushUndo();
+        kf.easing = easing;
+        renderCanvas();
+        renderTimeline();
+        updateKeyframeEditor();
+      },
+    },
+  });
+}
+
+// Quand une frame est déplacée dans la timeline, on remappe les valeurs f des
+// keyframes : les keyframes à f=from se retrouvent à f=to, et celles entre
+// from et to se décalent d'1 dans le sens inverse.
+function shiftKeyframesForReorder(from, to) {
+  if (from === to) return;
+  const remap = (f) => {
+    if (f === from) return to;
+    if (from < to) return (f > from && f <= to) ? f - 1 : f;
+    return (f >= to && f < from) ? f + 1 : f;
+  };
+  for (const obj of project.objects) {
+    for (const prop of Object.keys(obj.tracks)) {
+      const tr = obj.tracks[prop];
+      tr.forEach(k => { k.f = remap(k.f); });
+      tr.sort((a, b) => a.f - b.f);
     }
   }
 }
 
-function updateTimelineThumb(index) {
-  const thumbs = timelineContainer.querySelectorAll('.frame-thumb');
-  if (thumbs[index]) {
-    const thumbCtx = thumbs[index].getContext('2d');
-    drawFrameToContext(thumbCtx, index, false);
-  }
-}
-
-function renderTimeline() {
-  timelineContainer.innerHTML = '';
-  frames.forEach((_, index) => {
-    const container = document.createElement('div');
-    container.className = `frame-thumb-container ${index === currentFrameIndex ? 'active' : ''}`;
-    container.dataset.index = String(index);
-    container.draggable = true;
-
-    container.addEventListener('click', (e) => {
-      if (container._isDragging) return;
-      currentFrameIndex = index;
-      if (isPlaying) togglePlay();
-      updateUI();
-    });
-
-    // Drag-to-reorder (HTML5 drag & drop)
-    container.addEventListener('dragstart', (e) => {
-      container._isDragging = true;
-      container.classList.add('dragging');
-      e.dataTransfer.setData('text/plain', String(index));
-      e.dataTransfer.effectAllowed = 'move';
-    });
-    container.addEventListener('dragend', () => {
-      container._isDragging = false;
-      container.classList.remove('dragging');
-      document.querySelectorAll('.frame-thumb-container.drop-target').forEach(el => el.classList.remove('drop-target'));
-    });
-    container.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      container.classList.add('drop-target');
-    });
-    container.addEventListener('dragleave', () => container.classList.remove('drop-target'));
-    container.addEventListener('drop', (e) => {
-      e.preventDefault();
-      container.classList.remove('drop-target');
-      const from = parseInt(e.dataTransfer.getData('text/plain'), 10);
-      const to = index;
-      if (isNaN(from) || from === to) return;
-      pushUndo();
-      const [moved] = frames.splice(from, 1);
-      frames.splice(to, 0, moved);
-      if (currentFrameIndex === from) currentFrameIndex = to;
-      else if (from < currentFrameIndex && to >= currentFrameIndex) currentFrameIndex--;
-      else if (from > currentFrameIndex && to <= currentFrameIndex) currentFrameIndex++;
-      updateUI();
-    });
-
-    const thumbCanvas = document.createElement('canvas');
-    thumbCanvas.className = 'frame-thumb';
-    thumbCanvas.width = WIDTH;
-    thumbCanvas.height = HEIGHT;
-    drawFrameToContext(thumbCanvas.getContext('2d'), index, false);
-
-    const label = document.createElement('div');
-    label.className = 'frame-thumb-label';
-    label.innerText = `Frame ${index + 1}`;
-
-    container.appendChild(thumbCanvas);
-    container.appendChild(label);
-    timelineContainer.appendChild(container);
-  });
-}
-
 // --- Frame Management ---
+// Note v3 : ajouter/dupliquer une frame = juste étendre frameCount. Les objets
+// existent globalement et restent visibles sur toute la timeline tant qu'ils
+// n'ont pas de visibleRanges qui dit le contraire.
 function addFrame() {
   pushUndo();
-  frames.push([]);
-  currentFrameIndex = frames.length - 1;
+  project.frameCount++;
+  currentFrameIndex = project.frameCount - 1;
   updateUI();
 }
 
 function duplicateFrame() {
-  if (frames.length === 0) return;
+  if (project.frameCount === 0) return;
   pushUndo();
-  const currentItems = frames[currentFrameIndex];
-  // Deep clone JSON-safe (items contiennent imgId, pas img)
-  const copyItems = JSON.parse(JSON.stringify(currentItems)).map(item => ({ ...item, id: generateId() }));
-  frames.splice(currentFrameIndex + 1, 0, copyItems);
+  // En v3, "dupliquer" la frame courante = insérer un nouveau slot juste après
+  // (les objets persistent), puis décaler les keyframes des frames suivantes.
+  shiftKeyframesAtOrAfter(currentFrameIndex + 1, +1);
+  project.frameCount++;
   currentFrameIndex++;
   updateUI();
 }
 
 function deleteFrame() {
-  pushUndo();
-  if (frames.length <= 1) {
-    frames[0] = []; // Just clear if it's the last one
-  } else {
-    frames.splice(currentFrameIndex, 1);
+  if (project.frameCount <= 1) {
+    // Cas dégénéré : on garde 1 frame mais on vide tout (purge keyframes à f=0
+    // pour les remettre à leur valeur par défaut). Plus simple : pas de purge,
+    // juste un signal "rien à faire".
+    return;
   }
+  pushUndo();
+  // Supprime les keyframes posés à currentFrameIndex et décale les suivants.
+  for (const obj of project.objects) {
+    for (const prop of Object.keys(obj.tracks)) {
+      const tr = obj.tracks[prop];
+      // Filtre les keyframes pile à currentFrameIndex puis shift les > currentFrameIndex
+      obj.tracks[prop] = tr.filter(k => k.f !== currentFrameIndex)
+                          .map(k => k.f > currentFrameIndex ? { ...k, f: k.f - 1 } : k);
+    }
+  }
+  project.frameCount--;
+  if (currentFrameIndex >= project.frameCount) currentFrameIndex = project.frameCount - 1;
   updateUI();
 }
 
 function clearCurrentFrame() {
-  if (frames.length === 0) return;
+  // En v3 il n'y a plus d'items "appartenant à" une frame en particulier. On
+  // interprète clear comme "retirer tous les objets dont au moins un keyframe
+  // tombe sur cette frame". Comportement plus prévisible : retire tous les
+  // objets visibles sur cette frame (= tout objet visible à f=currentFrameIndex).
+  if (project.frameCount === 0) return;
   pushUndo();
-  frames[currentFrameIndex] = [];
+  const visibleIds = new Set(currentItems().map(it => it.sourceId));
+  project.objects = project.objects.filter(o => !visibleIds.has(o.id));
+  clearSelection();
   updateUI();
+}
+
+// Décale les keyframes >= fromF de delta sur tous les objets/tracks.
+function shiftKeyframesAtOrAfter(fromF, delta) {
+  for (const obj of project.objects) {
+    for (const prop of Object.keys(obj.tracks)) {
+      const tr = obj.tracks[prop];
+      tr.forEach(k => { if (k.f >= fromF) k.f += delta; });
+      tr.sort((a, b) => a.f - b.f);
+    }
+  }
 }
 
 // --- Playback ---
@@ -1234,24 +2204,26 @@ function togglePlay() {
 }
 
 function play() {
-  if (frames.length <= 1) return;
-  selectedItemId = null; // Hide selection boxes during playback
+  if (project.frameCount <= 1) return;
+  clearSelection(); // Hide selection boxes during playback
   isPlaying = true;
-  btnPlayPause.innerText = 'Pause';
-  btnPlayPause.classList.remove('primary');
-  
+  setPlayButtonsState(true);
+
   playInterval = setInterval(() => {
-    currentFrameIndex = (currentFrameIndex + 1) % frames.length;
+    currentFrameIndex = (currentFrameIndex + 1) % project.frameCount;
     renderCanvas();
-    const thumbs = document.querySelectorAll('.frame-thumb-container');
-    thumbs.forEach((t, i) => t.classList.toggle('active', i === currentFrameIndex));
-  }, 1000 / fps);
+    // Maj rapide du playhead sans re-render complet (= pas de DOM rebuild)
+    const ph = timelineContainer && timelineContainer.querySelector('.gtl-playhead');
+    if (ph) {
+      const pct = project.frameCount <= 1 ? 0 : (currentFrameIndex / (project.frameCount - 1)) * 100;
+      ph.style.left = `${pct}%`;
+    }
+  }, 1000 / project.fps);
 }
 
 function stop() {
   isPlaying = false;
-  btnPlayPause.innerText = 'Play';
-  btnPlayPause.classList.add('primary');
+  setPlayButtonsState(false);
   clearInterval(playInterval);
   updateUI();
 }
@@ -1298,18 +2270,13 @@ function loadImageWithOptions(dataUrl, x, y, scale) {
 
     const imgId = generateId();
     imageCache.set(imgId, finalImg);
-    imageDataUrls.set(imgId, finalDataUrl);
+    project.imageDataUrls[imgId] = finalDataUrl;
 
     pushUndo();
-    const newItem = {
-      id: generateId(),
-      type: 'image',
-      imgId,
-      x, y,
-      scale: finalScale
-    };
-    frames[currentFrameIndex].push(newItem);
-    selectedItemId = newItem.id;
+    const obj = makeImageObject({ imgId, x, y, scale: finalScale, f: currentFrameIndex });
+    setVisibleFrom(obj, currentFrameIndex);
+    project.objects.push(obj);
+    setSingleSelection(obj.id);
     updateSelectionUI();
     renderCanvas();
     updateTimelineThumb(currentFrameIndex);
@@ -1322,138 +2289,20 @@ function applyTextTool() {
   if (!text) return;
 
   pushUndo();
-  const color = textColor.value;
+  const color = pencilColor.value;
   const size = parseInt(textSize.value) || 16;
   const x = parseInt(textX.value) || 0;
   const y = parseInt(textY.value) || 16;
   const font = textFont.value;
   pushRecentColor(color);
 
-  const newItem = {
-    id: generateId(),
-    type: 'text',
-    text: text,
-    font: font,
-    color: color,
-    size: size,
-    x: x,
-    y: y
-  };
-  
-  frames[currentFrameIndex].push(newItem);
-  selectedItemId = newItem.id;
+  const obj = makeTextObject({ text, font, x, y, size, color, f: currentFrameIndex });
+  setVisibleFrom(obj, currentFrameIndex);
+  project.objects.push(obj);
+  setSingleSelection(obj.id);
+  updateSelectionUI();
   renderCanvas();
   updateTimelineThumb(currentFrameIndex);
-}
-
-// Generate a scrolling animation for the currently selected item
-async function generateAnimation() {
-  if (!selectedItemId) {
-    showModal("Notice", "Please select an item on the canvas first to animate it.", false);
-    return;
-  }
-  
-  const selectedItem = frames[currentFrameIndex].find(i => i.id === selectedItemId);
-  if (!selectedItem) return;
-
-  const startX = parseInt(animStartX.value) || 0;
-  const startY = parseInt(animStartY.value) || 0;
-  const endX = parseInt(animEndX.value) || 0;
-  const endY = parseInt(animEndY.value) || 0;
-  
-  const startCol = animStartColor.value;
-  const endCol = animEndColor.value;
-
-  const hexToRgb = (hex) => {
-    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-    return result ? {
-      r: parseInt(result[1], 16),
-      g: parseInt(result[2], 16),
-      b: parseInt(result[3], 16)
-    } : { r: 255, g: 255, b: 255 };
-  };
-
-  const rgbToHex = (r, g, b) => {
-    return "#" + ((1 << 24) + (Math.round(r) << 16) + (Math.round(g) << 8) + Math.round(b)).toString(16).slice(1);
-  };
-
-  const c1 = hexToRgb(startCol);
-  const c2 = hexToRgb(endCol);
-
-  const mode = animMode.value; // 'duration' or 'speed'
-  const val = parseInt(animValue.value) || 1;
-  
-  const dx = endX - startX;
-  const dy = endY - startY;
-  const distance = Math.sqrt(dx * dx + dy * dy);
-  
-  let steps = 1;
-  if (mode === 'duration') {
-     steps = val;
-  } else if (mode === 'speed') {
-     steps = Math.max(1, Math.ceil(distance / val));
-  }
-  
-  const confirmed = await showModal(
-    "Confirm Generation",
-    `This will generate ${steps} frames interpolating from (${startX},${startY}) to (${endX},${endY}) with color transition. Existing frames will be updated. Proceed?`,
-    true
-  );
-  if (!confirmed) return;
-
-  pushUndo();
-  const easingName = animEasing ? animEasing.value : 'linear';
-
-  // Base frame to clone if we need to append new frames (clone without the animated item to form a background)
-  const baseFrame = frames[currentFrameIndex].filter(i => i.id !== selectedItemId);
-
-  for(let i = 0; i < steps; i++) {
-    const tRaw = steps > 1 ? (i / (steps - 1)) : 1;
-    const t = applyEasing(tRaw, easingName);
-    const currentX = Math.round(startX + dx * t);
-    const currentY = Math.round(startY + dy * t);
-
-    const curR = c1.r + (c2.r - c1.r) * t;
-    const curG = c1.g + (c2.g - c1.g) * t;
-    const curB = c1.b + (c2.b - c1.b) * t;
-    const currentColor = rgbToHex(curR, curG, curB);
-    
-    // Duplicate item properties (imgId reste valide après JSON round-trip)
-    let newItem = JSON.parse(JSON.stringify(selectedItem));
-    newItem.x = currentX;
-    newItem.y = currentY;
-    newItem.color = currentColor;
-
-    // Recalculate inner points for drawings
-    if (selectedItem.type === 'drawing') {
-      const offsetX = currentX - selectedItem.x;
-      const offsetY = currentY - selectedItem.y;
-      newItem.points = selectedItem.points.map(pt => ({ x: pt.x + offsetX, y: pt.y + offsetY }));
-      if (selectedItem.originalPoints) {
-         newItem.originalPoints = selectedItem.originalPoints.map(opt => ({ x: opt.x + offsetX, y: opt.y + offsetY }));
-      }
-    }
-
-    const targetFrameIndex = currentFrameIndex + i;
-
-    if (targetFrameIndex >= frames.length) {
-       // Frame neuve : base figée (sans l'item animé) + item repositionné
-       const newFrame = JSON.parse(JSON.stringify(baseFrame));
-       newFrame.push(newItem);
-       frames.push(newFrame);
-    } else {
-       // Overwrite the existing item in this target frame, or push it if it doesn't exist yet
-       const existingItemIndex = frames[targetFrameIndex].findIndex(k => k.id === selectedItemId);
-       if (existingItemIndex > -1) {
-          frames[targetFrameIndex][existingItemIndex] = newItem;
-       } else {
-          frames[targetFrameIndex].push(newItem);
-       }
-    }
-  }
-  
-  updateUI();
-  showModal("Success", `Generated ${steps} animation frames starting from frame ${currentFrameIndex + 1}.`, false);
 }
 
 // --- Video Export (.bin) ---
@@ -1465,44 +2314,15 @@ const exportProgressBar = document.getElementById('export-progress-bar');
 const exportProgressText = document.getElementById('export-progress-text');
 const exportStatusText = document.getElementById('export-status-text');
 
-// Ported from convertisseur_video.html — maps logical (col,row) to physical LED index
-function mapToLedIndex(col, row) {
-  const NUMBER_OF_PANEL_WIDTH = 12;
-  const NUMBER_OF_PANEL_HEIGHT = 2;
-  const LED_PER_ROW = 16;
-  const LED_PER_COL = 16;
-  const LED_PER_PANEL = 256;
-
-  if (col < 0 || row < 0) return -1;
-  if (col > (NUMBER_OF_PANEL_WIDTH * LED_PER_ROW) - 1 ||
-      row > (NUMBER_OF_PANEL_HEIGHT * LED_PER_COL) - 1) return -1;
-
-  const panel_col = Math.floor(col / LED_PER_ROW);
-  const panel_row = (NUMBER_OF_PANEL_HEIGHT - 1) - Math.floor(row / LED_PER_COL);
-  const panel_index = panel_row * NUMBER_OF_PANEL_WIDTH + (NUMBER_OF_PANEL_WIDTH - 1 - panel_col);
-
-  const local_col = col % LED_PER_ROW;
-  const local_row = (LED_PER_COL - 1) - (row % LED_PER_COL);
-
-  let local_led_index;
-  if (local_row % 2 === 0) {
-    local_led_index = local_row * LED_PER_ROW + (LED_PER_ROW - 1 - local_col);
-  } else {
-    local_led_index = local_row * LED_PER_ROW + local_col;
-  }
-
-  return panel_index * LED_PER_PANEL + local_led_index;
-}
-
 async function exportToBin() {
-  if (frames.length === 0) {
+  if (project.frameCount === 0) {
     showModal("Notice", "Aucune frame à exporter.", false);
     return;
   }
 
   const filename = (exportFilename.value.trim() || 'video') + '.bin';
   const useCustomMapping = exportMapping.value === 'custom';
-  const totalFrames = frames.length;
+  const totalFrames = project.frameCount;
   const totalPixels = WIDTH * HEIGHT;
 
   btnExportVideo.disabled = true;
@@ -1616,6 +2436,9 @@ function setBleStatus(state, label) {
   if (bleStatusBadge) {
     bleStatusBadge.dataset.state = state; // 'disconnected' | 'connecting' | 'connected' | 'error'
   }
+  // Mirror in the export pane
+  const mirror = document.getElementById('ble-status-badge-mirror');
+  if (mirror) mirror.dataset.state = state;
 }
 
 function onBleDisconnected() {
@@ -1635,13 +2458,13 @@ async function streamToBle() {
     return;
   }
   
-  if (frames.length === 0) {
+  if (project.frameCount === 0) {
     showModal("Notice", "Aucune frame à exporter.", false);
     return;
   }
 
   const useCustomMapping = exportMapping.value === 'custom';
-  const totalFrames = frames.length;
+  const totalFrames = project.frameCount;
   const totalPixels = WIDTH * HEIGHT;
 
   btnStreamBle.disabled = true;
@@ -1732,86 +2555,75 @@ async function streamToBle() {
 // === EXTRAS : easing, presets, palette, save/load, dithering, zoom, GIF ===
 // =========================================================================
 
-// ---- Easing ----
-function applyEasing(t, name) {
-  switch (name) {
-    case 'ease-in':     return t * t;
-    case 'ease-out':    return 1 - (1 - t) * (1 - t);
-    case 'ease-in-out': return t < 0.5 ? 2*t*t : 1 - Math.pow(-2*t + 2, 2) / 2;
-    case 'bounce':      return bounceOut(t);
-    default:            return t; // linear
+// ---- Animation presets (V3 : pose des keyframes) ----
+function presetScroll(direction) {
+  const obj = getObject(selectedItemId);
+  if (!obj) { showModal('Notice', 'Sélectionne un item d\'abord.', false); return; }
+  const it = currentItems().find(i => i.sourceId === obj.id);
+  if (!it) return;
+  const b = getItemBounds(it);
+  const y = Math.round(b.y);
+  const color = it.color || '#ffffff';
+  const startF = currentFrameIndex;
+  const endF = currentFrameIndex + 39;
+  let startX, endX;
+  if (direction === 'left') {
+    startX = WIDTH; endX = -Math.round(b.width);
+  } else {
+    startX = -Math.round(b.width); endX = WIDTH;
   }
-}
-function bounceOut(t) {
-  const n1 = 7.5625, d1 = 2.75;
-  if (t < 1/d1) return n1 * t * t;
-  if (t < 2/d1) { t -= 1.5/d1;  return n1 * t * t + 0.75; }
-  if (t < 2.5/d1) { t -= 2.25/d1; return n1 * t * t + 0.9375; }
-  t -= 2.625/d1; return n1 * t * t + 0.984375;
+  pushUndo();
+  setKeyframe(obj, 'x', startF, startX, 'linear');
+  setKeyframe(obj, 'y', startF, y, 'linear');
+  setKeyframe(obj, 'color', startF, color, 'linear');
+  setKeyframe(obj, 'x', endF, endX, 'linear');
+  setKeyframe(obj, 'y', endF, y, 'linear');
+  setKeyframe(obj, 'color', endF, color, 'linear');
+  if (project.frameCount <= endF) project.frameCount = endF + 1;
+  renderCanvas();
+  renderTimeline();
+  updateKeyframeEditor();
 }
 
-// ---- Animation presets ----
-function presetScroll(direction) {
-  if (!selectedItemId) { showModal('Notice', 'Sélectionne un item d\'abord.', false); return; }
-  const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
-  if (!item) return;
-  const b = getItemBounds(item);
-  if (direction === 'left') {
-    animStartX.value = WIDTH;              animStartY.value = Math.round(b.y);
-    animEndX.value   = -Math.round(b.width); animEndY.value   = Math.round(b.y);
-  } else {
-    animStartX.value = -Math.round(b.width); animStartY.value = Math.round(b.y);
-    animEndX.value   = WIDTH;                animEndY.value   = Math.round(b.y);
-  }
-  animStartColor.value = item.color || '#ffffff';
-  animEndColor.value = item.color || '#ffffff';
-  animMode.value = 'duration';
-  animValue.value = 40;
-  if (animEasing) animEasing.value = 'linear';
-  generateAnimation();
-}
 function presetBlink() {
-  if (!selectedItemId) { showModal('Notice','Sélectionne un item.', false); return; }
-  const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
-  if (!item) return;
+  const obj = getObject(selectedItemId);
+  if (!obj) { showModal('Notice','Sélectionne un item.', false); return; }
   pushUndo();
   const total = 8;
   for (let i = 0; i < total; i++) {
-    const targetFrameIndex = currentFrameIndex + i;
-    const baseFrame = frames[currentFrameIndex].filter(k => k.id !== selectedItemId);
-    const on = (i % 2 === 0);
-    const newFrame = JSON.parse(JSON.stringify(baseFrame));
-    if (on) {
-      const copy = JSON.parse(JSON.stringify(item));
-      newFrame.push(copy);
-    }
-    if (targetFrameIndex >= frames.length) frames.push(newFrame);
-    else frames[targetFrameIndex] = newFrame;
+    setKeyframe(obj, 'opacity', currentFrameIndex + i, i % 2 === 0 ? 1 : 0, 'linear');
   }
-  updateUI();
+  const endF = currentFrameIndex + total - 1;
+  if (project.frameCount <= endF) project.frameCount = endF + 1;
+  renderCanvas();
+  renderTimeline();
+  updateKeyframeEditor();
 }
+
 function presetFade(dir) {
-  if (!selectedItemId) { showModal('Notice','Sélectionne un item.', false); return; }
-  const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
-  if (!item) return;
-  animStartX.value = Math.round(item.x);
-  animStartY.value = Math.round(item.y);
-  animEndX.value   = Math.round(item.x);
-  animEndY.value   = Math.round(item.y);
-  const itemCol = item.color || '#ffffff';
-  if (dir === 'in') { animStartColor.value = '#000000'; animEndColor.value = itemCol; }
-  else              { animStartColor.value = itemCol;  animEndColor.value = '#000000'; }
-  animMode.value = 'duration';
-  animValue.value = 20;
-  if (animEasing) animEasing.value = 'ease-in-out';
-  generateAnimation();
+  const obj = getObject(selectedItemId);
+  if (!obj) { showModal('Notice','Sélectionne un item.', false); return; }
+  pushUndo();
+  const startF = currentFrameIndex;
+  const endF = currentFrameIndex + 19;
+  if (dir === 'in') {
+    setKeyframe(obj, 'opacity', startF, 0, 'linear');
+    setKeyframe(obj, 'opacity', endF,   1, 'ease-in-out');
+  } else {
+    setKeyframe(obj, 'opacity', startF, 1, 'linear');
+    setKeyframe(obj, 'opacity', endF,   0, 'ease-in-out');
+  }
+  if (project.frameCount <= endF) project.frameCount = endF + 1;
+  renderCanvas();
+  renderTimeline();
+  updateKeyframeEditor();
 }
 
 // ---- Palette ----
 function renderPalette() {
   if (!paletteContainer) return;
   paletteContainer.innerHTML = '';
-  recentColors.forEach(c => {
+  project.recentColors.forEach(c => {
     const chip = document.createElement('button');
     chip.className = 'palette-chip';
     chip.style.backgroundColor = c;
@@ -1822,40 +2634,41 @@ function renderPalette() {
   });
 }
 
-// ---- Save / Load projet .json ----
+// ---- Save / Load projet .json (v3) ----
+// Le format v3 sérialise le `project` directement. Les anciennes versions
+// (frames[]) ne sont volontairement plus chargées.
 function serializeProject() {
-  const images = {};
-  imageDataUrls.forEach((v, k) => images[k] = v);
-  return {
-    version: 2,
-    width: WIDTH, height: HEIGHT,
-    fps,
-    frames,
-    images,
-    recentColors
-  };
+  return JSON.parse(JSON.stringify(project));
 }
 
 async function loadProjectFromObject(obj) {
-  if (!obj || !obj.frames) { showModal('Erreur','Fichier projet invalide.', false); return; }
+  if (!obj || obj.version !== SCENE_VERSION || !Array.isArray(obj.objects)) {
+    showModal('Erreur', `Fichier projet invalide ou format obsolète (v${obj && obj.version}). Cette version requiert v${SCENE_VERSION}.`, false);
+    return;
+  }
   // Reconstruit imageCache depuis les dataURL
   imageCache.clear();
-  imageDataUrls.clear();
-  const imgEntries = Object.entries(obj.images || {});
+  const imgEntries = Object.entries(obj.imageDataUrls || {});
   await Promise.all(imgEntries.map(([id, dataUrl]) => new Promise(res => {
     const im = new Image();
-    im.onload = () => { imageCache.set(id, im); imageDataUrls.set(id, dataUrl); res(); };
+    im.onload = () => { imageCache.set(id, im); res(); };
     im.onerror = () => res();
     im.src = dataUrl;
   })));
-  frames = obj.frames;
+  project = obj;
+  // Garanties minimales sur les champs (au cas où le fichier est corrompu)
+  if (typeof project.frameCount !== 'number' || project.frameCount < 1) project.frameCount = 1;
+  if (typeof project.fps !== 'number')   project.fps = 20;
+  if (!Array.isArray(project.recentColors) || project.recentColors.length === 0) {
+    project.recentColors = ['#ffffff', '#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff', '#ff8800'];
+  }
+  if (!project.imageDataUrls) project.imageDataUrls = {};
   currentFrameIndex = 0;
-  fps = obj.fps || 20;
-  if (inputFps) inputFps.value = fps;
-  if (Array.isArray(obj.recentColors)) { recentColors = obj.recentColors.slice(0, 8); renderPalette(); }
+  if (inputFps) inputFps.value = project.fps;
+  renderPalette();
   undoStack = []; redoStack = [];
   updateUndoButtons();
-  selectedItemId = null;
+  clearSelection();
   updateUI();
 }
 
@@ -1890,24 +2703,25 @@ async function handleLoadProjectFile(e) {
 async function newProject() {
   const ok = await showModal('Nouveau projet', 'Vider le projet en cours ? (cela efface tout, undo inclus)', true);
   if (!ok) return;
-  frames = [[]];
+  project = createEmptyProject({ width: WIDTH, height: HEIGHT, fps: 20, frameCount: 1 });
   currentFrameIndex = 0;
   undoStack = []; redoStack = [];
-  imageCache.clear(); imageDataUrls.clear();
-  selectedItemId = null;
+  imageCache.clear();
+  clearSelection();
   updateUndoButtons();
+  renderPalette();
   updateUI();
-  localStorage.removeItem('glougloubus-autosave');
+  localStorage.removeItem(AUTOSAVE_KEY);
 }
 
-// ---- Autosave ----
+// ---- Autosave (v3) ---- (clés déclarées en tête du fichier pour TDZ)
 let autosaveTimer = null;
 function scheduleAutosave() {
   if (autosaveTimer) clearTimeout(autosaveTimer);
   autosaveTimer = setTimeout(() => {
     try {
-      localStorage.setItem('glougloubus-autosave', JSON.stringify(serializeProject()));
-      localStorage.setItem('glougloubus-autosave-ts', String(Date.now()));
+      localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(serializeProject()));
+      localStorage.setItem(AUTOSAVE_TS_KEY, String(Date.now()));
     } catch (err) {
       // localStorage quota — silencieux, les images peuvent exploser la taille
       console.warn('Autosave skipped:', err.message);
@@ -1916,15 +2730,19 @@ function scheduleAutosave() {
 }
 
 async function tryRestoreAutosave() {
-  const raw = localStorage.getItem('glougloubus-autosave');
+  // Purge automatique des anciens autosaves v1/v2 (incompatibles)
+  localStorage.removeItem('glougloubus-autosave');
+  localStorage.removeItem('glougloubus-autosave-ts');
+
+  const raw = localStorage.getItem(AUTOSAVE_KEY);
   if (!raw) return;
   try {
     const obj = JSON.parse(raw);
-    if (!obj.frames || obj.frames.length === 0) return;
-    const ts = parseInt(localStorage.getItem('glougloubus-autosave-ts') || '0', 10);
+    if (obj.version !== SCENE_VERSION || !Array.isArray(obj.objects) || obj.objects.length === 0) return;
+    const ts = parseInt(localStorage.getItem(AUTOSAVE_TS_KEY) || '0', 10);
     const ago = Math.round((Date.now() - ts) / 1000);
     const ok = await showModal('Restaurer l\'autosave',
-      `Un projet sauvegardé automatiquement a été trouvé (il y a ${ago}s, ${obj.frames.length} frame(s)). Le restaurer ?`,
+      `Un projet sauvegardé automatiquement a été trouvé (il y a ${ago}s, ${obj.objects.length} objet(s)). Le restaurer ?`,
       true);
     if (ok) await loadProjectFromObject(obj);
   } catch {}
@@ -1948,24 +2766,35 @@ document.addEventListener('fullscreenchange', () => {
 });
 
 // ---- Zoom / Pan ----
+// Le container est flex-centré dans le wrapper. On utilise transform-origin:
+// center pour que scale() ne déplace pas le centre (sinon le coin haut-gauche
+// reste fixe et le container déborde toujours en bas-droite). viewPanX/Y est
+// alors un offset SUPPLÉMENTAIRE par rapport à la position centrée.
 function applyCanvasTransform() {
   if (!canvasWrapper) return;
   const container = canvasWrapper.querySelector('.canvas-container');
   if (!container) return;
   container.style.transform = `translate(${viewPanX}px, ${viewPanY}px) scale(${viewZoom})`;
-  container.style.transformOrigin = '0 0';
+  container.style.transformOrigin = '50% 50%';
 }
 function setZoom(z, centerX, centerY) {
   const newZ = Math.max(0.5, Math.min(8, z));
-  if (canvasWrapper && centerX !== undefined) {
-    const rect = canvas.getBoundingClientRect();
+  if (canvasWrapper) {
     const wrapperRect = canvasWrapper.getBoundingClientRect();
-    const cx = centerX - wrapperRect.left;
-    const cy = centerY - wrapperRect.top;
-    // Maintient le point sous le curseur
+    // Référentiel "depuis le centre du wrapper" : dx, dy = offset du point
+    // d'ancrage par rapport au centre du wrapper.
+    let dx, dy;
+    if (centerX !== undefined) {
+      dx = (centerX - wrapperRect.left) - wrapperRect.width / 2;
+      dy = (centerY - wrapperRect.top)  - wrapperRect.height / 2;
+    } else {
+      // Boutons +/- : ancre = centre wrapper → offset nul → reste centré.
+      dx = 0;
+      dy = 0;
+    }
     const ratio = newZ / viewZoom;
-    viewPanX = cx - (cx - viewPanX) * ratio;
-    viewPanY = cy - (cy - viewPanY) * ratio;
+    viewPanX = dx - (dx - viewPanX) * ratio;
+    viewPanY = dy - (dy - viewPanY) * ratio;
   }
   viewZoom = newZ;
   applyCanvasTransform();
@@ -2013,129 +2842,6 @@ function initZoomPan() {
   if (btnZoomReset) btnZoomReset.addEventListener('click', resetZoom);
 }
 
-// ---- Dithering / palette quantization ----
-function processImage(srcImg, ditherMode, paletteSize) {
-  // Dessine l'image sur un canvas à sa taille native pour manipuler les pixels
-  const c = document.createElement('canvas');
-  c.width = srcImg.width; c.height = srcImg.height;
-  const cc = c.getContext('2d');
-  cc.drawImage(srcImg, 0, 0);
-  const imgData = cc.getImageData(0, 0, c.width, c.height);
-  const d = imgData.data;
-
-  // Palette
-  let palette = null;
-  if (paletteSize > 0) palette = buildPaletteMedianCut(d, paletteSize);
-
-  if (ditherMode === 'floyd-steinberg') {
-    floydSteinberg(d, c.width, c.height, palette);
-  } else if (palette) {
-    quantizeWithPalette(d, palette);
-  }
-
-  cc.putImageData(imgData, 0, 0);
-  const dataUrl = c.toDataURL('image/png');
-  return new Promise((resolve) => {
-    const out = new Image();
-    out.onload = () => resolve({ image: out, dataUrl });
-    out.src = dataUrl;
-  });
-}
-
-function nearestColor(r, g, b, palette) {
-  let best = palette[0], bd = Infinity;
-  for (let i = 0; i < palette.length; i++) {
-    const p = palette[i];
-    const dr = r - p[0], dg = g - p[1], db = b - p[2];
-    const dist = dr*dr + dg*dg + db*db;
-    if (dist < bd) { bd = dist; best = p; }
-  }
-  return best;
-}
-
-function floydSteinberg(data, w, h, palette) {
-  // Copy into float buffer (per channel)
-  const buf = new Float32Array(data.length);
-  for (let i = 0; i < data.length; i++) buf[i] = data[i];
-
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = (y * w + x) * 4;
-      let or = buf[i], og = buf[i+1], ob = buf[i+2];
-      let nr, ng, nb;
-      if (palette) {
-        const n = nearestColor(or, og, ob, palette);
-        nr = n[0]; ng = n[1]; nb = n[2];
-      } else {
-        // 3-3-2 bit quantize (no palette)
-        nr = (Math.round(or / 32) * 32) & 0xFF;
-        ng = (Math.round(og / 32) * 32) & 0xFF;
-        nb = (Math.round(ob / 64) * 64) & 0xFF;
-      }
-      buf[i] = nr; buf[i+1] = ng; buf[i+2] = nb;
-      const er = or - nr, eg = og - ng, eb = ob - nb;
-      const diffuse = (dx, dy, f) => {
-        const xx = x + dx, yy = y + dy;
-        if (xx < 0 || xx >= w || yy >= h) return;
-        const k = (yy * w + xx) * 4;
-        buf[k]   += er * f;
-        buf[k+1] += eg * f;
-        buf[k+2] += eb * f;
-      };
-      diffuse(1, 0, 7/16);
-      diffuse(-1, 1, 3/16);
-      diffuse(0, 1, 5/16);
-      diffuse(1, 1, 1/16);
-    }
-  }
-  for (let i = 0; i < data.length; i += 4) {
-    data[i]   = Math.max(0, Math.min(255, buf[i]));
-    data[i+1] = Math.max(0, Math.min(255, buf[i+1]));
-    data[i+2] = Math.max(0, Math.min(255, buf[i+2]));
-  }
-}
-
-function quantizeWithPalette(data, palette) {
-  for (let i = 0; i < data.length; i += 4) {
-    const n = nearestColor(data[i], data[i+1], data[i+2], palette);
-    data[i] = n[0]; data[i+1] = n[1]; data[i+2] = n[2];
-  }
-}
-
-function buildPaletteMedianCut(data, k) {
-  // Collecte pixels non-transparents
-  const pixels = [];
-  for (let i = 0; i < data.length; i += 4) {
-    if (data[i+3] > 0) pixels.push([data[i], data[i+1], data[i+2]]);
-  }
-  const boxes = [pixels];
-  while (boxes.length < k) {
-    // Subdivise la plus grosse boîte sur son plus grand axe
-    boxes.sort((a, b) => b.length - a.length);
-    const box = boxes.shift();
-    if (!box || box.length < 2) { boxes.push(box); break; }
-    let min = [255,255,255], max = [0,0,0];
-    for (const p of box) {
-      for (let c = 0; c < 3; c++) {
-        if (p[c] < min[c]) min[c] = p[c];
-        if (p[c] > max[c]) max[c] = p[c];
-      }
-    }
-    const ranges = [max[0]-min[0], max[1]-min[1], max[2]-min[2]];
-    const axis = ranges.indexOf(Math.max(...ranges));
-    box.sort((a, b) => a[axis] - b[axis]);
-    const mid = box.length >> 1;
-    boxes.push(box.slice(0, mid));
-    boxes.push(box.slice(mid));
-  }
-  return boxes.filter(b => b.length).map(box => {
-    let r=0, g=0, b=0;
-    for (const p of box) { r+=p[0]; g+=p[1]; b+=p[2]; }
-    const n = box.length;
-    return [Math.round(r/n), Math.round(g/n), Math.round(b/n)];
-  });
-}
-
 // ---- BLE test pattern ----
 async function sendBleTestPattern() {
   if (!isBleConnected) { showModal('Notice', 'Non connecté.', false); return; }
@@ -2166,35 +2872,21 @@ async function sendBleTestPattern() {
     showModal('Erreur BLE', err.message, false);
   }
 }
-function hslToRgb(h, s, l) {
-  s /= 100; l /= 100;
-  const c = (1 - Math.abs(2*l - 1)) * s;
-  const hp = h / 60;
-  const x = c * (1 - Math.abs(hp % 2 - 1));
-  let r=0, g=0, b=0;
-  if (hp < 1) [r,g,b] = [c,x,0];
-  else if (hp < 2) [r,g,b] = [x,c,0];
-  else if (hp < 3) [r,g,b] = [0,c,x];
-  else if (hp < 4) [r,g,b] = [0,x,c];
-  else if (hp < 5) [r,g,b] = [x,0,c];
-  else [r,g,b] = [c,0,x];
-  const m = l - c/2;
-  return [Math.round((r+m)*255), Math.round((g+m)*255), Math.round((b+m)*255)];
-}
-
-// ---- Export GIF (encoder minimaliste, pas de dep externe) ----
+// ---- Export GIF ----
 async function exportGif() {
-  if (frames.length === 0) { showModal('Notice', 'Aucune frame.', false); return; }
+  if (project.frameCount === 0) { showModal('Notice', 'Aucune frame.', false); return; }
   if (btnExportGif) btnExportGif.disabled = true;
   if (exportStatusText) exportStatusText.innerText = 'Génération GIF…';
   if (exportProgressContainer) exportProgressContainer.hidden = false;
 
+  const totalFrames = project.frameCount;
+
   // Collecte toutes les frames en RGBA + construit palette globale
   const framesRgb = [];
-  for (let i = 0; i < frames.length; i++) {
+  for (let i = 0; i < totalFrames; i++) {
     drawFrameToContext(offCtx, i, false);
     framesRgb.push(offCtx.getImageData(0, 0, WIDTH, HEIGHT));
-    if (exportProgressBar) exportProgressBar.style.width = `${Math.round((i+1)/frames.length*40)}%`;
+    if (exportProgressBar) exportProgressBar.style.width = `${Math.round((i+1)/totalFrames*40)}%`;
   }
 
   // Palette 256 via median-cut sur pixels concaténés
@@ -2206,7 +2898,7 @@ async function exportGif() {
   palette.forEach((c, i) => { paletteFlat[i*3] = c[0]; paletteFlat[i*3+1] = c[1]; paletteFlat[i*3+2] = c[2]; });
 
   // Délai par frame (en centièmes de secondes)
-  const delayCs = Math.max(2, Math.round(100 / fps));
+  const delayCs = Math.max(2, Math.round(100 / project.fps));
 
   // Construction du GIF (LZW)
   const enc = new GifEncoder(WIDTH, HEIGHT, paletteFlat, palette.length, delayCs);
@@ -2225,128 +2917,10 @@ async function exportGif() {
   a.href = url; a.download = 'glougloubus.gif'; a.click();
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 
-  if (exportStatusText) exportStatusText.innerText = `Terminé ! GIF ${frames.length} frames.`;
+  if (exportStatusText) exportStatusText.innerText = `Terminé ! GIF ${totalFrames} frames.`;
   if (exportProgressBar) exportProgressBar.style.width = '100%';
   if (btnExportGif) btnExportGif.disabled = false;
 }
-function nearestPaletteIdx(r, g, b, palette) {
-  let bi = 0, bd = Infinity;
-  for (let i = 0; i < palette.length; i++) {
-    const p = palette[i];
-    const dr = r-p[0], dg = g-p[1], db = b-p[2];
-    const d = dr*dr + dg*dg + db*db;
-    if (d < bd) { bd = d; bi = i; }
-  }
-  return bi;
-}
-
-// Encodeur GIF89a minimaliste avec LZW
-class GifEncoder {
-  constructor(w, h, paletteFlat, paletteCount, delayCs) {
-    this.w = w; this.h = h;
-    this.paletteCount = paletteCount;
-    this.delayCs = delayCs;
-    // Table de couleurs : taille = 2^ceil(log2(count)), max 256
-    let tableSize = 2;
-    let tableExp = 1;
-    while (tableSize < paletteCount) { tableSize *= 2; tableExp++; }
-    this.tableExp = tableExp - 1; // format GIF : valeur-1 dans le header
-    this.tableSize = tableSize;
-    this.paddedPalette = new Uint8Array(tableSize * 3);
-    this.paddedPalette.set(paletteFlat.subarray(0, paletteCount * 3));
-    this.bytes = [];
-    this._writeHeader();
-  }
-  _writeHeader() {
-    this._writeStr('GIF89a');
-    // Logical screen descriptor
-    this._writeU16(this.w); this._writeU16(this.h);
-    this._writeByte(0b10000000 | this.tableExp); // GCT flag + size
-    this._writeByte(0); // bg index
-    this._writeByte(0); // px aspect
-    // Global color table
-    for (let i = 0; i < this.paddedPalette.length; i++) this._writeByte(this.paddedPalette[i]);
-    // NETSCAPE loop extension
-    this._writeByte(0x21); this._writeByte(0xFF); this._writeByte(11);
-    this._writeStr('NETSCAPE2.0');
-    this._writeByte(3); this._writeByte(1);
-    this._writeU16(0); // 0 = infinite
-    this._writeByte(0);
-  }
-  addFrame(indices) {
-    // Graphics Control Extension
-    this._writeByte(0x21); this._writeByte(0xF9); this._writeByte(4);
-    this._writeByte(0); // flags
-    this._writeU16(this.delayCs);
-    this._writeByte(0); // transparent index
-    this._writeByte(0); // terminator
-    // Image descriptor
-    this._writeByte(0x2C);
-    this._writeU16(0); this._writeU16(0);
-    this._writeU16(this.w); this._writeU16(this.h);
-    this._writeByte(0); // no local table, no interlace
-    // LZW
-    const minCodeSize = Math.max(2, this.tableExp + 1);
-    this._writeByte(minCodeSize);
-    const lzw = lzwEncode(indices, minCodeSize);
-    // Sub-blocks
-    for (let off = 0; off < lzw.length; off += 255) {
-      const len = Math.min(255, lzw.length - off);
-      this._writeByte(len);
-      for (let i = 0; i < len; i++) this._writeByte(lzw[off + i]);
-    }
-    this._writeByte(0); // block terminator
-  }
-  finish() {
-    this._writeByte(0x3B); // trailer
-    return new Blob([new Uint8Array(this.bytes)], { type: 'image/gif' });
-  }
-  _writeByte(b) { this.bytes.push(b & 0xFF); }
-  _writeU16(n) { this._writeByte(n); this._writeByte(n >> 8); }
-  _writeStr(s) { for (let i = 0; i < s.length; i++) this._writeByte(s.charCodeAt(i)); }
-}
-
-// LZW de base pour GIF (retourne Uint8Array)
-function lzwEncode(pixels, minCodeSize) {
-  const CLEAR = 1 << minCodeSize;
-  const END = CLEAR + 1;
-  let nextCode = END + 1;
-  let codeSize = minCodeSize + 1;
-  const dict = new Map();
-  const out = [];
-  let buf = 0, bufBits = 0;
-  const emit = (code) => {
-    buf |= code << bufBits;
-    bufBits += codeSize;
-    while (bufBits >= 8) { out.push(buf & 0xFF); buf >>= 8; bufBits -= 8; }
-  };
-  emit(CLEAR);
-  let prefix = pixels[0];
-  for (let i = 1; i < pixels.length; i++) {
-    const k = pixels[i];
-    const key = prefix * 4096 + k; // fits since palette<=256, nextCode<=4095
-    if (dict.has(key)) {
-      prefix = dict.get(key);
-    } else {
-      emit(prefix);
-      if (nextCode < 4096) {
-        dict.set(key, nextCode++);
-        if (nextCode > (1 << codeSize) && codeSize < 12) codeSize++;
-      } else {
-        emit(CLEAR);
-        dict.clear();
-        nextCode = END + 1;
-        codeSize = minCodeSize + 1;
-      }
-      prefix = k;
-    }
-  }
-  emit(prefix);
-  emit(END);
-  if (bufBits > 0) out.push(buf & 0xFF);
-  return Uint8Array.from(out);
-}
-
 // ---- Keyboard shortcuts ----
 function initShortcuts() {
   window.addEventListener('keydown', (e) => {
@@ -2370,8 +2944,8 @@ function initShortcuts() {
       e.preventDefault(); duplicateFrame(); return;
     }
     if (ctrl && (e.key === 'c' || e.key === 'C') && selectedItemId && !inInput) {
-      const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
-      if (item) clipboardItem = JSON.parse(JSON.stringify(item));
+      const obj = getObject(selectedItemId);
+      if (obj) clipboardItem = JSON.parse(JSON.stringify(obj));
       return;
     }
     if (ctrl && (e.key === 'v' || e.key === 'V') && clipboardItem && !inInput) {
@@ -2379,10 +2953,14 @@ function initShortcuts() {
       pushUndo();
       const copy = JSON.parse(JSON.stringify(clipboardItem));
       copy.id = generateId();
-      copy.x = (copy.x || 0) + 2;
-      copy.y = (copy.y || 0) + 2;
-      frames[currentFrameIndex].push(copy);
-      selectedItemId = copy.id;
+      // Décale x/y du clone à la frame courante (sur le track) pour éviter
+      // de superposer pile sur l'original.
+      const curX = getValueAt(copy.tracks && copy.tracks.x, currentFrameIndex, 0);
+      const curY = getValueAt(copy.tracks && copy.tracks.y, currentFrameIndex, 0);
+      setKeyframe(copy, 'x', currentFrameIndex, curX + 2);
+      setKeyframe(copy, 'y', currentFrameIndex, curY + 2);
+      project.objects.push(copy);
+      setSingleSelection(copy.id);
       renderCanvas(); updateTimelineThumb(currentFrameIndex); updateSelectionUI();
       return;
     }
@@ -2392,7 +2970,7 @@ function initShortcuts() {
     if (e.key === ' ') { e.preventDefault(); togglePlay(); return; }
     if (e.key === 'Escape') {
       if (document.fullscreenElement) return;
-      selectedItemId = null;
+      clearSelection();
       shapePreview = null;
       updateSelectionUI();
       renderCanvas();
@@ -2414,31 +2992,315 @@ function initShortcuts() {
       currentFrameIndex = Math.max(0, currentFrameIndex - 1); updateUI(); return;
     }
     if (e.key === 'ArrowRight' || e.key === 'PageDown') {
-      currentFrameIndex = Math.min(frames.length - 1, currentFrameIndex + 1); updateUI(); return;
+      currentFrameIndex = Math.min(project.frameCount - 1, currentFrameIndex + 1); updateUI(); return;
     }
   });
 }
 
 function nudgeSelected(dx, dy) {
-  const item = frames[currentFrameIndex].find(i => i.id === selectedItemId);
-  if (!item) return;
+  if (selectedIds.size === 0) return;
   pushUndo();
-  if (item.type === 'drawing') {
-    item.points = item.points.map(p => ({ x: p.x + dx, y: p.y + dy }));
-  } else if (item.type === 'shape') {
-    item.x1 += dx; item.x2 += dx; item.y1 += dy; item.y2 += dy;
-  } else {
-    item.x += dx; item.y += dy;
+  for (const id of selectedIds) {
+    const obj = getObject(id);
+    if (!obj || obj.locked) continue;
+    if (obj.type === 'shape') {
+      const curX1 = getValueAt(obj.tracks.x1, currentFrameIndex, 0);
+      const curY1 = getValueAt(obj.tracks.y1, currentFrameIndex, 0);
+      const curX2 = getValueAt(obj.tracks.x2, currentFrameIndex, 0);
+      const curY2 = getValueAt(obj.tracks.y2, currentFrameIndex, 0);
+      updateObjectProp(obj, 'x1', curX1 + dx);
+      updateObjectProp(obj, 'y1', curY1 + dy);
+      updateObjectProp(obj, 'x2', curX2 + dx);
+      updateObjectProp(obj, 'y2', curY2 + dy);
+    } else {
+      const curX = getValueAt(obj.tracks.x, currentFrameIndex, 0);
+      const curY = getValueAt(obj.tracks.y, currentFrameIndex, 0);
+      updateObjectProp(obj, 'x', curX + dx);
+      updateObjectProp(obj, 'y', curY + dy);
+    }
   }
-  populatePropertiesPanel(item);
+  const primary = getObject(selectedItemId);
+  if (primary) {
+    const it = currentItems().find(i => i.sourceId === primary.id);
+    if (it) populatePropertiesPanel(it);
+  }
   renderCanvas();
   updateTimelineThumb(currentFrameIndex);
   updateSelectionUI();
 }
 
+// =========================================================================
+// === Phase 5 — Transforms avancés : flip, align, distribute, snap-objs ===
+// =========================================================================
+
+// Toggle flip H/V sur tous les sélectionnés (statique).
+function toggleFlip(axis /* 'x' | 'y' */) {
+  if (selectedIds.size === 0) return;
+  pushUndo();
+  for (const id of selectedIds) {
+    const obj = getObject(id);
+    if (!obj || obj.locked) continue;
+    if (obj.type === 'group') continue; // pas de flip sur les groupes pour l'instant
+    if (axis === 'x') obj.static.flipX = !obj.static.flipX;
+    else              obj.static.flipY = !obj.static.flipY;
+  }
+  renderCanvas();
+  updateTimelineThumb(currentFrameIndex);
+  updateLayersPanel();
+}
+
+// Translate un objet (x/y ou x1/x2/y1/y2 pour shape) à la frame courante en
+// décalant la valeur courante du delta donné. Utilise updateObjectProp pour
+// poser un keyframe si la track est animée, sinon écrit la propriété statique.
+function translateObject(obj, dx, dy) {
+  if (!obj || obj.locked) return;
+  if (obj.type === 'shape') {
+    const x1 = getValueAt(obj.tracks.x1, currentFrameIndex, 0);
+    const y1 = getValueAt(obj.tracks.y1, currentFrameIndex, 0);
+    const x2 = getValueAt(obj.tracks.x2, currentFrameIndex, 0);
+    const y2 = getValueAt(obj.tracks.y2, currentFrameIndex, 0);
+    updateObjectProp(obj, 'x1', Math.round(x1 + dx));
+    updateObjectProp(obj, 'y1', Math.round(y1 + dy));
+    updateObjectProp(obj, 'x2', Math.round(x2 + dx));
+    updateObjectProp(obj, 'y2', Math.round(y2 + dy));
+  } else if (obj.type === 'group') {
+    const x = getValueAt(obj.tracks.x, currentFrameIndex, 0);
+    const y = getValueAt(obj.tracks.y, currentFrameIndex, 0);
+    updateObjectProp(obj, 'x', Math.round(x + dx));
+    updateObjectProp(obj, 'y', Math.round(y + dy));
+  } else {
+    const x = getValueAt(obj.tracks.x, currentFrameIndex, 0);
+    const y = getValueAt(obj.tracks.y, currentFrameIndex, 0);
+    updateObjectProp(obj, 'x', Math.round(x + dx));
+    updateObjectProp(obj, 'y', Math.round(y + dy));
+  }
+}
+
+// Renvoie le bbox unrotaté (en coords logiques) d'un id sélectionné, ou null.
+function getSelectionBoundsById(id) {
+  const it = currentItems().find(i => i.sourceId === id);
+  if (!it) return null;
+  return getItemBounds(it);
+}
+
+// Bbox commun de tous les ids sélectionnés (union AABB).
+function getCommonBounds(ids) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const id of ids) {
+    const b = getSelectionBoundsById(id);
+    if (!b) continue;
+    minX = Math.min(minX, b.x);
+    minY = Math.min(minY, b.y);
+    maxX = Math.max(maxX, b.x + b.width);
+    maxY = Math.max(maxY, b.y + b.height);
+  }
+  if (!isFinite(minX)) return null;
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+// Aligne la sélection. Mode = 'left' | 'centerH' | 'right' | 'top' | 'centerV' | 'bottom'.
+// Référence : si ≥2 items sélectionnés → bbox commun ; si 1 → canvas (192×32).
+function alignSelection(mode) {
+  if (selectedIds.size === 0) return;
+  const ids = [...selectedIds].filter(id => {
+    const o = getObject(id);
+    return o && !o.locked && o.type !== 'group';
+  });
+  if (ids.length === 0) return;
+
+  let ref;
+  if (ids.length >= 2) {
+    ref = getCommonBounds(ids);
+  } else {
+    ref = { x: 0, y: 0, width: WIDTH, height: HEIGHT };
+  }
+  if (!ref) return;
+
+  pushUndo();
+  for (const id of ids) {
+    const obj = getObject(id);
+    const b = getSelectionBoundsById(id);
+    if (!obj || !b) continue;
+    let dx = 0, dy = 0;
+    switch (mode) {
+      case 'left':    dx = ref.x - b.x; break;
+      case 'centerH': dx = (ref.x + ref.width / 2) - (b.x + b.width / 2); break;
+      case 'right':   dx = (ref.x + ref.width) - (b.x + b.width); break;
+      case 'top':     dy = ref.y - b.y; break;
+      case 'centerV': dy = (ref.y + ref.height / 2) - (b.y + b.height / 2); break;
+      case 'bottom':  dy = (ref.y + ref.height) - (b.y + b.height); break;
+    }
+    if (dx || dy) translateObject(obj, dx, dy);
+  }
+  renderCanvas();
+  updateTimelineThumb(currentFrameIndex);
+  updateSelectionUI();
+}
+
+// Distribue uniformément les items sélectionnés sur l'axe donné.
+// Algorithme classique : trie par centre, garde les extrêmes en place,
+// répartit les centres des intermédiaires à intervalles égaux.
+function distributeSelection(axis /* 'h' | 'v' */) {
+  const ids = [...selectedIds].filter(id => {
+    const o = getObject(id);
+    return o && !o.locked && o.type !== 'group';
+  });
+  if (ids.length < 3) {
+    showModal('Notice', 'Sélectionne au moins 3 objets pour distribuer.', false);
+    return;
+  }
+  const entries = ids.map(id => {
+    const b = getSelectionBoundsById(id);
+    if (!b) return null;
+    const center = axis === 'h' ? (b.x + b.width / 2) : (b.y + b.height / 2);
+    return { id, center };
+  }).filter(Boolean);
+  entries.sort((a, b) => a.center - b.center);
+
+  const first = entries[0].center;
+  const last = entries[entries.length - 1].center;
+  const step = (last - first) / (entries.length - 1);
+
+  pushUndo();
+  for (let i = 1; i < entries.length - 1; i++) {
+    const target = first + step * i;
+    const obj = getObject(entries[i].id);
+    const delta = target - entries[i].center;
+    if (Math.abs(delta) < 0.5) continue;
+    if (axis === 'h') translateObject(obj, delta, 0);
+    else              translateObject(obj, 0, delta);
+  }
+  renderCanvas();
+  updateTimelineThumb(currentFrameIndex);
+  updateSelectionUI();
+}
+
+// ---- Snap aux objets pendant un drag ----
+// snapToObjects: bool ; tolérance ~2 px logiques.
+let snapToObjectsEnabled = false;
+const SNAP_OBJ_TOL = 2;
+
+// Renvoie {dx, dy} : ajustement à appliquer au delta de drag pour qu'au moins
+// un bord/centre du groupe sélectionné s'aligne avec un bord/centre d'un objet
+// non-sélectionné. Retourne { dx: 0, dy: 0 } si aucun snap.
+// movingBounds = bbox courant du primary après application du delta brut.
+function computeObjectSnap(movingBounds) {
+  if (!snapToObjectsEnabled || !movingBounds) return { dx: 0, dy: 0, hits: [] };
+  const items = currentItems();
+  const targetsX = []; // { v, type } — bords/centres verticaux des autres objets
+  const targetsY = [];
+  for (const it of items) {
+    if (selectedIds.has(it.sourceId)) continue;
+    const b = getItemBounds(it);
+    if (!b) continue;
+    targetsX.push(b.x, b.x + b.width / 2, b.x + b.width);
+    targetsY.push(b.y, b.y + b.height / 2, b.y + b.height);
+  }
+  if (targetsX.length === 0) return { dx: 0, dy: 0, hits: [] };
+
+  const candidatesX = [movingBounds.x, movingBounds.x + movingBounds.width / 2, movingBounds.x + movingBounds.width];
+  const candidatesY = [movingBounds.y, movingBounds.y + movingBounds.height / 2, movingBounds.y + movingBounds.height];
+
+  let bestDx = 0, bestDxAbs = SNAP_OBJ_TOL + 0.001;
+  let bestDy = 0, bestDyAbs = SNAP_OBJ_TOL + 0.001;
+  for (const c of candidatesX) for (const t of targetsX) {
+    const d = t - c;
+    if (Math.abs(d) < bestDxAbs) { bestDx = d; bestDxAbs = Math.abs(d); }
+  }
+  for (const c of candidatesY) for (const t of targetsY) {
+    const d = t - c;
+    if (Math.abs(d) < bestDyAbs) { bestDy = d; bestDyAbs = Math.abs(d); }
+  }
+  return { dx: bestDx, dy: bestDy };
+}
+
+// ---- Group / Ungroup (Phase 4) ----
+function groupSelection() {
+  if (selectedIds.size < 2) {
+    showModal('Notice', 'Sélectionne au moins 2 objets pour les grouper.', false);
+    return;
+  }
+  pushUndo();
+  const ids = [...selectedIds];
+  // Trie les enfants dans leur ordre actuel dans objects[] pour préserver z-order relatif
+  const positions = ids.map(id => ({ id, idx: project.objects.findIndex(o => o.id === id) })).filter(p => p.idx !== -1);
+  positions.sort((a, b) => a.idx - b.idx);
+
+  // Position d'insertion = juste APRÈS l'enfant le plus en avant-plan, pour
+  // que dans le panel UI (top-first) le group apparaisse au-dessus de ses enfants.
+  const maxIdx = positions[positions.length - 1].idx;
+
+  // Crée un group avec position 0,0 (juste pour avoir des tracks valides).
+  const group = createObject('group', { name: 'Groupe' });
+  setKeyframe(group, 'x', currentFrameIndex, 0);
+  setKeyframe(group, 'y', currentFrameIndex, 0);
+  setKeyframe(group, 'opacity', currentFrameIndex, 1);
+
+  // Marque les enfants : parentId vers le group
+  for (const { id } of positions) {
+    const o = project.objects.find(x => x.id === id);
+    if (o) o.parentId = group.id;
+  }
+  // Insère le group à maxIdx + 1
+  project.objects.splice(maxIdx + 1, 0, group);
+
+  setSingleSelection(group.id);
+  renderCanvas();
+  updateLayersPanel();
+  updateSelectionUI();
+  updateTimelineThumb(currentFrameIndex);
+}
+
+function ungroupSelection() {
+  if (selectedIds.size === 0) return;
+  let didSomething = false;
+  pushUndo();
+  const idsSnapshot = [...selectedIds];
+  for (const id of idsSnapshot) {
+    const obj = getObject(id);
+    if (!obj) continue;
+    if (obj.type === 'group') {
+      // Restore tous les enfants à parentId=null et supprime le group
+      const children = project.objects.filter(o => o.parentId === id);
+      for (const c of children) c.parentId = null;
+      project.objects = project.objects.filter(o => o.id !== id);
+      removeFromSelection(id);
+      // Sélectionne les enfants à la place
+      children.forEach(c => addSelection(c.id));
+      didSomething = true;
+    } else if (obj.parentId) {
+      // Item enfant d'un group : juste détacher
+      obj.parentId = null;
+      didSomething = true;
+    }
+  }
+  if (!didSomething) {
+    // Rollback du pushUndo
+    if (undoStack.length > 0) undoStack.pop();
+    updateUndoButtons();
+    showModal('Notice', 'Rien à dégrouper dans la sélection.', false);
+    return;
+  }
+  renderCanvas();
+  updateLayersPanel();
+  updateSelectionUI();
+  updateTimelineThumb(currentFrameIndex);
+}
+
 // ---- PWA ----
 function registerPwa() {
   if (!('serviceWorker' in navigator)) return;
+  // En dev, le SW casse les hot-updates Vite (cache-first sur same-origin).
+  // Désinscrire tout SW existant + skip register.
+  if (import.meta.env.DEV) {
+    navigator.serviceWorker.getRegistrations()
+      .then(regs => regs.forEach(r => r.unregister()))
+      .catch(() => {});
+    if (window.caches) {
+      caches.keys().then(keys => keys.forEach(k => caches.delete(k))).catch(() => {});
+    }
+    return;
+  }
   const base = import.meta.env.BASE_URL || '/';
   navigator.serviceWorker.register(base + 'sw.js').catch(err => console.warn('SW register failed:', err));
 }
@@ -2477,6 +3339,39 @@ function initExtras() {
   if (toggleOnion) {
     toggleOnion.addEventListener('change', () => { onionSkinEnabled = toggleOnion.checked; renderCanvas(); });
   }
+  if (toggleSnapObjects) {
+    toggleSnapObjects.addEventListener('change', () => { snapToObjectsEnabled = toggleSnapObjects.checked; });
+  }
+
+  // Transform controls (Phase 5)
+  if (propRotation) {
+    propRotation.addEventListener('focus', () => { if (selectedItemId) pushUndo(); });
+    propRotation.addEventListener('input', () => {
+      const obj = getObject(selectedItemId);
+      if (!obj) return;
+      const v = parseFloat(propRotation.value);
+      if (Number.isNaN(v)) return;
+      updateObjectProp(obj, 'rotation', v);
+      renderCanvas();
+      updateTimelineThumb(currentFrameIndex);
+    });
+  }
+  if (btnRotReset) btnRotReset.addEventListener('click', () => {
+    const obj = getObject(selectedItemId);
+    if (!obj) return;
+    pushUndo();
+    updateObjectProp(obj, 'rotation', 0);
+    if (propRotation) propRotation.value = '0';
+    renderCanvas();
+    updateTimelineThumb(currentFrameIndex);
+  });
+  if (btnFlipH) btnFlipH.addEventListener('click', () => toggleFlip('x'));
+  if (btnFlipV) btnFlipV.addEventListener('click', () => toggleFlip('y'));
+  if (alignButtons) alignButtons.forEach(b => {
+    b.addEventListener('click', () => alignSelection(b.dataset.align));
+  });
+  if (btnDistH) btnDistH.addEventListener('click', () => distributeSelection('h'));
+  if (btnDistV) btnDistV.addEventListener('click', () => distributeSelection('v'));
 
   // Fullscreen
   if (btnFullscreen) btnFullscreen.addEventListener('click', toggleFullscreen);
@@ -2504,7 +3399,64 @@ function initExtras() {
   // Keyboard shortcuts
   initShortcuts();
 
+  // Layers panel toolbar (Phase 3)
+  if (btnLayerUp) btnLayerUp.addEventListener('click', () => {
+    if (!selectedItemId) return;
+    const idx = project.objects.findIndex(o => o.id === selectedItemId);
+    if (idx === -1 || idx === project.objects.length - 1) return;
+    pushUndo();
+    const [obj] = project.objects.splice(idx, 1);
+    project.objects.splice(idx + 1, 0, obj);
+    renderCanvas();
+    updateLayersPanel();
+    updateTimelineThumb(currentFrameIndex);
+  });
+  if (btnLayerDown) btnLayerDown.addEventListener('click', () => {
+    if (!selectedItemId) return;
+    const idx = project.objects.findIndex(o => o.id === selectedItemId);
+    if (idx <= 0) return;
+    pushUndo();
+    const [obj] = project.objects.splice(idx, 1);
+    project.objects.splice(idx - 1, 0, obj);
+    renderCanvas();
+    updateLayersPanel();
+    updateTimelineThumb(currentFrameIndex);
+  });
+  if (btnLayerDuplicate) btnLayerDuplicate.addEventListener('click', () => {
+    if (!selectedItemId) return;
+    const obj = getObject(selectedItemId);
+    if (!obj) return;
+    pushUndo();
+    const copy = JSON.parse(JSON.stringify(obj));
+    copy.id = generateId();
+    if (copy.tracks && copy.tracks.x) {
+      const curX = getValueAt(copy.tracks.x, currentFrameIndex, 0);
+      setKeyframe(copy, 'x', currentFrameIndex, curX + 2);
+    }
+    if (copy.tracks && copy.tracks.y) {
+      const curY = getValueAt(copy.tracks.y, currentFrameIndex, 0);
+      setKeyframe(copy, 'y', currentFrameIndex, curY + 2);
+    }
+    const origIdx = project.objects.findIndex(o => o.id === selectedItemId);
+    project.objects.splice(origIdx + 1, 0, copy);
+    setSingleSelection(copy.id);
+    renderCanvas();
+    updateSelectionUI();
+    updateTimelineThumb(currentFrameIndex);
+  });
+  if (btnLayerDelete) btnLayerDelete.addEventListener('click', deleteSelectedItem);
+  if (btnLayerGroup) btnLayerGroup.addEventListener('click', groupSelection);
+  if (btnLayerUngroup) btnLayerUngroup.addEventListener('click', ungroupSelection);
+
+  // Bottom sheet (mobile UI)
+  initBottomSheet({ onTabChange: tab => {
+    if (tab === 'anim') updateKeyframeEditor();
+    if (tab === 'timeline') renderTimeline();
+  }});
+
   // Autosave restore + register PWA
   tryRestoreAutosave();
   registerPwa();
 }
+
+// (initBottomSheet est dans modules/sheet.js — l'auto-open est appelé depuis updateSelectionUI)

@@ -25,6 +25,7 @@ dist-ssr
 
 # Claude Code local workspace
 .claude/
+.playwright-mcp/
 
 # Windows / MSYS crash dumps
 *.stackdump

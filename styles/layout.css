@@ -1,0 +1,446 @@
+/* ============== APP SHELL & MAIN LAYOUT ============== */
+
+.app-shell {
+  display: grid;
+  /* Ordre vertical : topbar, dock (outils), stage (canvas, 1fr).
+     La frame strip a été migrée en onglet "Timeline" du bottom-sheet, donc
+     pas de ligne dédiée. */
+  grid-template-rows: var(--topbar-h) var(--dock-h) 1fr;
+  height: 100dvh;
+  padding-top: var(--safe-top);
+  /* Reserve space for the sticky sheet handle (visible when sheet is closed/peek) */
+  padding-bottom: calc(var(--sheet-handle-h) + var(--safe-bottom));
+  position: relative;
+  overflow: hidden;
+}
+
+/* ============== TOP BAR ============== */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0 0.6rem;
+  background: var(--bg-panel);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+.brand {
+  font-size: 0.95rem;
+  font-weight: 600;
+  flex: 1;
+  text-align: center;
+  background: linear-gradient(135deg, #60a5fa, #a78bfa);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ============== STAGE / CANVAS ============== */
+.stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  background: #050505;
+  overflow: hidden;
+  min-height: 0;
+  padding: 0.5rem;
+}
+.canvas-wrapper {
+  position: relative;
+  width: 100%;
+  /* Grow to fill available vertical space so zoom/pan have room to breathe.
+     Sans ça, wrapper = taille pile du container, et le scale() est cropé
+     dès qu'on dépasse cette zone. */
+  flex: 1 1 auto;
+  min-height: 0;
+  touch-action: none;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.canvas-container {
+  position: relative;
+  /* Le ratio 6:1 est désormais porté par le canvas, pas le container.
+     Border-box pour que la content box soit exactement
+     (width-12) × (height-12), avec le canvas en width:100% de cette
+     content box, hauteur dérivée de l'aspect-ratio → pas de letterbox. */
+  width: min(100%, calc(var(--stage-h) * 6));
+  max-width: 100%;
+  background: #050505;
+  padding: 4px;
+  border-radius: 6px;
+  border: 2px solid var(--bg-secondary);
+  box-shadow: inset 0 0 20px rgba(0,0,0,0.8);
+  box-sizing: border-box;
+}
+#led-canvas {
+  display: block;
+  background: transparent;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 192 / 32;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.canvas-toolbar {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  width: 100%;
+  flex: 0 0 auto;
+}
+.canvas-toolbar .spacer { flex: 1; }
+
+/* ============== DOCK : TOOLS + PALETTE ============== */
+.dock {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.5rem 0.6rem;
+  background: var(--bg-panel);
+  /* Dock placé en HAUT sous le topbar : bordure inférieure (pas supérieure) */
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+.tool-selector {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.3rem;
+}
+
+/* Draw tool dropdown (position:fixed, placed via JS) */
+.draw-dropdown {
+  position: fixed;
+  z-index: 200;
+  background: var(--bg-elevated);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 10px;
+  padding: 0.3rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 155px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.55);
+}
+.draw-dropdown[hidden] { display: none; }
+.draw-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.38rem 0.6rem;
+  border-radius: 6px;
+  background: transparent;
+  border: none;
+  color: var(--text-main);
+  font-family: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.draw-dropdown-item:hover {
+  background: rgba(59,130,246,0.15);
+  color: var(--accent-hover);
+}
+.draw-dropdown-item.active {
+  background: rgba(59,130,246,0.2);
+  color: var(--accent-hover);
+}
+.tool-btn {
+  background: var(--bg-secondary);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 9px;
+  min-height: 40px;
+  font-size: 1.1rem;
+  color: var(--text-main);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+  transition: background 0.12s, transform 0.08s, box-shadow 0.12s;
+}
+.tool-btn:active { transform: scale(0.95); }
+.tool-btn.active {
+  background: var(--accent-color);
+  border-color: var(--accent-hover);
+  box-shadow: 0 0 0 2px rgba(59,130,246,0.3);
+}
+
+.palette-row {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 2px;
+}
+.palette-row::-webkit-scrollbar { height: 4px; }
+.palette-row > input[type="color"] {
+  width: 44px; height: 36px; padding: 2px;
+  border-radius: 8px; flex: 0 0 auto;
+  border: 1px solid rgba(255,255,255,0.2);
+  background: transparent; cursor: pointer;
+}
+.palette-container { display: flex; gap: 0.3rem; flex: 0 0 auto; }
+.palette-chip {
+  width: 30px; height: 30px; min-width: 30px;
+  border-radius: 7px;
+  border: 1px solid rgba(255,255,255,0.2);
+  cursor: pointer;
+  padding: 0;
+  flex: 0 0 auto;
+  transition: transform 0.1s;
+}
+.palette-chip:active { transform: scale(0.92); }
+
+/* ============== TIMELINE TAB CONTROLS (déplacé du strip vers la sheet) ============== */
+.strip-controls {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.strip-controls .spacer { flex: 1; }
+.play-btn {
+  min-width: 44px;
+  min-height: 36px;
+  padding: 0 0.7rem;
+  font-size: 1rem;
+}
+.fps-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+.fps-control input { width: 52px; height: 36px; padding: 0.3rem 0.4rem; }
+
+/* ============== GLOBAL TIMELINE (Phase 6) ============== */
+/* Posée dans #timeline-container quand le mode timeline est actif. Le mode
+ * thumbs reste accessible via le bouton de bascule. */
+.gtl-root {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.1rem 0.4rem 0.2rem;
+  /* Aligne les enfants pour qu'ils prennent la pleine largeur */
+  align-items: stretch;
+}
+
+.gtl-ruler-wrap {
+  position: relative;
+  height: 26px;
+  flex: 0 0 auto;
+  /* Mirror la structure d'une .gtl-track-row : spacer-label à gauche + ruler
+     prenant le reste. Garantit l'alignement pixel-pixel des ticks/playhead
+     avec les dots des lanes. */
+  display: flex;
+  align-items: stretch;
+  gap: 0.4rem;
+}
+.gtl-ruler {
+  position: relative;
+  flex: 1;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  cursor: ew-resize;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.gtl-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.07);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.gtl-tick.major { background: rgba(255, 255, 255, 0.18); }
+.gtl-tick.active { background: var(--accent-color); }
+.gtl-tick-label {
+  position: absolute;
+  top: 1px;
+  left: 3px;
+  font-size: 0.62rem;
+  color: var(--text-muted);
+  font-family: 'JetBrains Mono', monospace;
+  pointer-events: none;
+}
+
+.gtl-playhead {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: var(--accent-color);
+  transform: translateX(-50%);
+  pointer-events: none;
+  border-radius: 1px;
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.6);
+  z-index: 3;
+}
+
+.gtl-lanes {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  /* Pas de max-height ni overflow ici : on veut que toutes les lanes soient
+     visibles d'un coup quand un objet est sélectionné. La sheet parent gère
+     son propre scroll si nécessaire. */
+}
+.gtl-hint {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  padding: 0.4rem 0.5rem;
+  margin: 0;
+}
+.gtl-track-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  height: 16px;
+}
+.gtl-track-label {
+  width: 3.2rem;
+  font-size: 0.62rem;
+  color: var(--text-muted);
+  text-align: right;
+  flex-shrink: 0;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+.gtl-lane {
+  position: relative;
+  flex: 1;
+  height: 16px;
+  cursor: pointer;
+  touch-action: none;
+}
+.gtl-lane-bar {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 1px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.gtl-lane-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(59, 130, 246, 0.55);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.gtl-dot {
+  position: absolute;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-main);
+  border: 1.5px solid var(--bg-primary);
+  transform: translate(-50%, -50%);
+  cursor: grab;
+  touch-action: none;
+  z-index: 2;
+}
+/* Code couleur par easing — repère visuel rapide sans avoir à ouvrir le menu.
+   Linear reste blanc (défaut), les autres prennent une teinte. */
+.gtl-dot[data-easing="ease-in"]      { background: #fbbf24; } /* amber */
+.gtl-dot[data-easing="ease-out"]     { background: #34d399; } /* emerald */
+.gtl-dot[data-easing="ease-in-out"]  { background: #a78bfa; } /* violet */
+.gtl-dot[data-easing="bounce"]       { background: #f472b6; } /* pink */
+.gtl-dot:hover {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 1px;
+}
+.gtl-dot:active { cursor: grabbing; transform: translate(-50%, -50%) scale(1.25); }
+
+/* Légende easings dans le hint de la timeline */
+.gtl-legend {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem;
+  margin-top: 0.25rem;
+  font-size: 0.7rem;
+}
+.gtl-legend-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 0.2rem;
+  border: 1px solid rgba(0, 0, 0, 0.4);
+  vertical-align: middle;
+  background: var(--text-main);
+}
+.gtl-legend-dot[data-easing="ease-in"]      { background: #fbbf24; }
+.gtl-legend-dot[data-easing="ease-out"]     { background: #34d399; }
+.gtl-legend-dot[data-easing="ease-in-out"]  { background: #a78bfa; }
+.gtl-legend-dot[data-easing="bounce"]       { background: #f472b6; }
+
+/* ============== PREVIEW (FULLSCREEN) ============== */
+body.preview-mode .topbar,
+body.preview-mode .dock,
+body.preview-mode .sheet,
+body.preview-mode .canvas-toolbar { display: none !important; }
+body.preview-mode .app-shell {
+  grid-template-rows: 1fr;
+  padding: 0 !important;
+}
+body.preview-mode .stage { padding: 0; background: #000; }
+
+/* ============== TABLET / WIDE ============== */
+@media (min-width: 768px) {
+  :root {
+    --topbar-h: 56px;
+    --dock-h: 110px;
+  }
+  .brand { font-size: 1.15rem; }
+  .tool-selector { gap: 0.4rem; }
+  .palette-row { flex-wrap: wrap; }
+  .palette-container { flex-wrap: wrap; flex: 1; }
+  .sheet[data-state="open"] { max-height: 65dvh; }
+  .stage { padding: 1rem; }
+  .canvas-container { max-width: 1100px; }
+}
+
+/* Landscape phone : compact even more */
+@media (max-height: 480px) and (orientation: landscape) {
+  :root {
+    --topbar-h: 40px;
+    --dock-h: 84px;
+    --sheet-handle-h: 50px;
+  }
+  .brand { font-size: 0.85rem; }
+}
