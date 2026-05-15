@@ -219,10 +219,44 @@ function buildRow(obj, idx, selectedIds, callbacks, total, depth = 0) {
   row.appendChild(menuBtn);
 
   // Click row (sauf sur les boutons) → select
+  // Long-press (≥500ms sans bouger) = additif (toggle), équivalent tactile de Shift-clic
+  let pressTimer = null;
+  let longPressFired = false;
+  let pressStart = null;
+
+  const cancelPress = () => {
+    if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
+    pressStart = null;
+  };
+
+  row.addEventListener('pointerdown', e => {
+    if (e.target === handle) return;
+    if (e.target.closest('button')) return;
+    if (row.classList.contains('renaming')) return;
+    longPressFired = false;
+    pressStart = { x: e.clientX, y: e.clientY };
+    pressTimer = setTimeout(() => {
+      longPressFired = true;
+      pressTimer = null;
+      if (navigator.vibrate) try { navigator.vibrate(25); } catch {}
+      callbacks.onSelect(obj.id, true);
+    }, 500);
+  });
+  row.addEventListener('pointermove', e => {
+    if (!pressStart) return;
+    const dx = e.clientX - pressStart.x;
+    const dy = e.clientY - pressStart.y;
+    if (dx * dx + dy * dy > 64) cancelPress();
+  });
+  row.addEventListener('pointerup', cancelPress);
+  row.addEventListener('pointercancel', cancelPress);
+  row.addEventListener('pointerleave', cancelPress);
+
   row.addEventListener('click', e => {
     if (e.target === handle) return;
     if (e.target.closest('button')) return;
     if (e.target === name && row.classList.contains('renaming')) return;
+    if (longPressFired) { longPressFired = false; return; }
     const modifier = e.shiftKey || e.ctrlKey || e.metaKey;
     callbacks.onSelect(obj.id, modifier);
   });

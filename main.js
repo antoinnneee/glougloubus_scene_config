@@ -754,6 +754,9 @@ function handlePointerDown(e) {
 
   if (hitItem) {
     pushUndo();
+    // Snapshot pour le long-press : on doit pouvoir rejouer Shift-clic
+    // a posteriori (toggle additif sur la sélection AVANT la mutation ci-dessous).
+    const prevSelectionForLongPress = new Set(selectedIds);
     if (additive) {
       // Shift-click : toggle dans la sélection (sans démarrer un drag)
       toggleSelection(hitItem.sourceId);
@@ -784,6 +787,30 @@ function handlePointerDown(e) {
         obj._dragOriginX1 = hitItem.x1; obj._dragOriginY1 = hitItem.y1;
         obj._dragOriginX2 = hitItem.x2; obj._dragOriginY2 = hitItem.y2;
       }
+    }
+
+    // Long-press = équivalent tactile de Shift-clic : toggle additif sans drag.
+    // Seulement utile si on n'a pas déjà passé par le chemin additif (Shift réel).
+    if (!additive) {
+      longPressStart = { x, y };
+      longPressItemId = hitItem.sourceId;
+      longPressPrevSelection = prevSelectionForLongPress;
+      longPressTimer = setTimeout(() => {
+        longPressTimer = null;
+        if (!isDragging) return; // déjà annulé par mouvement ou up
+        isDragging = false;
+        // Rétablit la sélection antérieure puis toggle, comme si l'utilisateur
+        // avait fait Shift-clic depuis le départ.
+        selectedIds = new Set(longPressPrevSelection);
+        syncPrimaryFromSet();
+        toggleSelection(longPressItemId);
+        if (navigator.vibrate) { try { navigator.vibrate(25); } catch {} }
+        longPressStart = null;
+        longPressItemId = null;
+        longPressPrevSelection = null;
+        updateSelectionUI();
+        renderCanvas();
+      }, 500);
     }
 
     populatePropertiesPanel(hitItem);
@@ -826,6 +853,19 @@ function captureGroupDragStart() {
 let marqueeStart = null;             // { x, y } en coords logiques
 let marqueeRect = null;              // { x1, y1, x2, y2 } courant
 let marqueeBaseSelection = null;     // Set d'ids présents au démarrage (additif Shift)
+
+// Long-press tactile sur un item du canvas = équivalent de Shift-clic (toggle additif).
+// Le timer est armé au pointerdown sur un hitItem et annulé dès qu'on bouge ou relâche.
+let longPressTimer = null;
+let longPressStart = null;           // { x, y } en coords logiques au pointerdown
+let longPressItemId = null;
+let longPressPrevSelection = null;   // snapshot de selectedIds AVANT que pointerdown ne mute
+function cancelLongPress() {
+  if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+  longPressStart = null;
+  longPressItemId = null;
+  longPressPrevSelection = null;
+}
 
 function rgbToHex(r, g, b) {
   const h = (n) => n.toString(16).padStart(2, '0');
@@ -904,6 +944,13 @@ function handlePointerMove(e) {
   }
 
   const { x, y } = getCanvasCoords(e);
+
+  // Annule le long-press si le doigt/curseur bouge au-delà du seuil (drag réel)
+  if (longPressTimer && longPressStart) {
+    const ldx = x - longPressStart.x;
+    const ldy = y - longPressStart.y;
+    if (ldx * ldx + ldy * ldy > 4) cancelLongPress();
+  }
 
   // Preview pendant drag d'un shape
   if (isDragging && shapePreview && ['line','rect','rect-outline','ellipse'].includes(currentTool)) {
@@ -1081,6 +1128,7 @@ function handlePointerUp(e) {
     canvas.releasePointerCapture(e.pointerId);
   }
   canvasPointers.delete(e.pointerId);
+  cancelLongPress();
 
   if (isPanning) {
     isPanning = false;
