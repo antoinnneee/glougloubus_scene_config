@@ -540,13 +540,18 @@ function init() {
     sizeValue.addEventListener('input', () => applySizeFromControl('value'));
   }
 
-  // pencilColor = couleur unifiée : met à jour l'item sélectionné (texte, dessin, shape) en live
+  // pencilColor = couleur unifiée : met à jour l'item sélectionné (texte, dessin, shape, pacman) en live
   if (pencilColor) {
     pencilColor.addEventListener('focus', () => { if (selectedItemId) pushUndo(); });
     pencilColor.addEventListener('input', () => {
       const obj = getObject(selectedItemId);
       if (!obj) return;
-      if (obj.type === 'text' || obj.type === 'drawing' || obj.type === 'shape') {
+      if (obj.type === 'pacman') {
+        // Pacman : color est dans static (pas dans tracks). On ecrit directement
+        // pour eviter que updateObjectProp ne pose un keyframe sur tracks.color.
+        obj.static.color = pencilColor.value;
+        renderCanvas();
+      } else if (obj.type === 'text' || obj.type === 'drawing' || obj.type === 'shape') {
         updateObjectProp(obj, 'color', pencilColor.value);
         renderCanvas();
       }
@@ -1345,6 +1350,8 @@ function populatePropertiesPanel(item) {
     imgY.value = item.y;
     imgScale.value = item.scale;
   } else if (item.type === 'drawing' || item.type === 'shape') {
+    if (item.color) pencilColor.value = item.color;
+  } else if (item.type === 'pacman') {
     if (item.color) pencilColor.value = item.color;
   }
   // La taille (texte/image/pacman) est gérée par le slider unifié de l'onglet
