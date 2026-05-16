@@ -2480,7 +2480,10 @@ function clearKeyframesOfSelected() {
     const v = getValueAt(track, currentFrameIndex, track[0].v);
     obj.tracks[prop] = [{ f: 0, v, easing: 'linear' }];
   }
-  updateUI();
+  // Pas d'updateUI() : on ne change pas de frame, on veut garder la sélection.
+  updateSelectionUI();
+  renderCanvas();
+  renderTimeline();
 }
 
 // Vide les keyframes de l'objet sélectionné UNIQUEMENT à la frame f (toutes
@@ -2495,7 +2498,10 @@ function clearKeyframesOfSelectedAtFrame(f) {
     if (!track || track.length === 0) continue;
     obj.tracks[prop] = track.filter(k => k.f !== f);
   }
-  updateUI();
+  // Pas d'updateUI() : on ne change pas de frame, on veut garder la sélection.
+  updateSelectionUI();
+  renderCanvas();
+  renderTimeline();
 }
 
 function clearCurrentFrame() {
