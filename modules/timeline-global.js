@@ -27,7 +27,7 @@ function closeMenu() {
 }
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeMenu(); });
 
-function showMenu(anchorEl, items) {
+function showMenu(anchorEl, items, coord) {
   closeMenu();
   const menu = document.createElement('div');
   menu.className = 'kf-menu';
@@ -47,12 +47,20 @@ function showMenu(anchorEl, items) {
   }
   document.body.appendChild(menu);
   _activeMenu = menu;
-  const rect = anchorEl.getBoundingClientRect();
+  // Positionnement : coord fournie (contextmenu = au curseur) sinon ancre sur
+  // le rectangle de l'élément (long-press sur dot = sous le dot).
   const mw = 180;
-  let left = rect.left;
-  let top = rect.bottom + 6;
+  let left, top;
+  if (coord) {
+    left = coord.x;
+    top = coord.y;
+  } else {
+    const rect = anchorEl.getBoundingClientRect();
+    left = rect.left;
+    top = rect.bottom + 6;
+  }
   if (left + mw > window.innerWidth) left = window.innerWidth - mw - 8;
-  if (top + 280 > window.innerHeight) top = rect.top - 280;
+  if (top + 280 > window.innerHeight) top = Math.max(8, top - 280);
   menu.style.left = `${left}px`;
   menu.style.top = `${Math.max(8, top)}px`;
 
@@ -131,6 +139,10 @@ export function renderGlobalTimeline(container, { project, currentFrame, selecte
   // Drag scrub : pointer sur la ruler met à jour la frame courante en live
   attachScrub(ruler, frameCount, callbacks.onSeek);
 
+  // Menu contextuel (clic droit / touch long-press → contextmenu) sur la
+  // ruler : actions au niveau frame (dupliquer / supprimer / vider l'objet).
+  attachTimelineContextMenu(ruler, frameCount, !!selectedObj, callbacks);
+
   rulerWrap.appendChild(ruler);
   container.appendChild(rulerWrap);
 
@@ -182,6 +194,40 @@ function attachScrub(el, frameCount, onSeek) {
   });
 }
 
+// Clic-droit sur la ruler ou une lane vide → menu d'actions frame-level :
+//   - Dupliquer la frame (à la position cliquée)
+//   - Supprimer la frame (à la position cliquée)
+//   - Vider tous les keyframes de l'objet sélectionné (si présent)
+// Le menu apparaît au curseur. Sur un dot, son propre handler stopPropagation
+// donc on n'arrive jamais ici depuis un keyframe.
+function attachTimelineContextMenu(el, frameCount, hasSelected, callbacks) {
+  el.addEventListener('contextmenu', (e) => {
+    if (e.target.classList.contains('gtl-dot')) return;
+    e.preventDefault();
+    const rect = el.getBoundingClientRect();
+    const raw = Math.round(((e.clientX - rect.left) / rect.width) * (frameCount - 1));
+    const f = Math.max(0, Math.min(frameCount - 1, raw));
+    const items = [
+      { label: '⎘ Dupliquer la frame', action: () => callbacks.onDuplicateFrame && callbacks.onDuplicateFrame(f) },
+      { label: '🗑 Supprimer la frame', danger: true, action: () => callbacks.onDeleteFrame && callbacks.onDeleteFrame(f) },
+    ];
+    if (hasSelected) {
+      items.push({ separator: true, label: 'Objet sélectionné' });
+      items.push({
+        label: `🧹 Vider les keyframes à f${f}`,
+        danger: true,
+        action: () => callbacks.onClearObjectKeyframesAtFrame && callbacks.onClearObjectKeyframesAtFrame(f),
+      });
+      items.push({
+        label: '🗑 Vider tous les keyframes',
+        danger: true,
+        action: () => callbacks.onClearObjectKeyframes && callbacks.onClearObjectKeyframes(),
+      });
+    }
+    showMenu(el, items, { x: e.clientX, y: e.clientY });
+  });
+}
+
 function buildTrackRow(prop, kfs, frameCount, currentFrame, callbacks) {
   const row = document.createElement('div');
   row.className = 'gtl-track-row';
@@ -208,6 +254,9 @@ function buildTrackRow(prop, kfs, frameCount, currentFrame, callbacks) {
   // Évite de masquer le scrub : si le drag dépasse 4 px, on annule l'add et on
   // bascule sur le scrub (handlé par attachScrub plus bas).
   attachLaneInteraction(lane, prop, frameCount, callbacks);
+  // Clic-droit sur la lane (zone vide) : mêmes actions frame-level que sur
+  // la ruler. Les dots stoppent la propagation pour conserver leur menu.
+  attachTimelineContextMenu(lane, frameCount, true, callbacks);
 
   // Dots des keyframes
   for (const kf of kfs) {
@@ -320,6 +369,9 @@ function buildDot(prop, kf, frameCount, laneEl, callbacks) {
 
   dot.addEventListener('contextmenu', (e) => {
     e.preventDefault();
+    // Empêche le menu contextmenu de la lane/ruler de prendre le dessus :
+    // sur un dot, c'est le menu spécifique au keyframe qu'on veut.
+    e.stopPropagation();
     openDotMenu();
   });
 

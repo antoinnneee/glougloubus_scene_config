@@ -110,6 +110,14 @@ body {
 .iconbtn:hover { background: rgba(0,0,0,0.75); }
 .iconbtn:active { transform: scale(0.93); }
 .iconbtn:disabled { opacity: 0.3; cursor: not-allowed; }
+/* État pressé persistant (toggle buttons : flip H/V, etc.) */
+.iconbtn[aria-pressed="true"] {
+  background: var(--accent-color);
+  border-color: var(--accent-hover);
+  color: white;
+  box-shadow: inset 0 0 0 1px var(--accent-hover), 0 0 0 2px rgba(59,130,246,0.25);
+}
+.iconbtn[aria-pressed="true"]:hover { background: var(--accent-hover); }
 .iconbtn.danger {
   background: rgba(239,68,68,0.55);
   border-color: var(--danger-color);

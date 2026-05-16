@@ -49,7 +49,7 @@
         <div class="tool-selector">
           <button class="tool-btn" data-tool="select" title="Sélection (V)" aria-label="Select">⟑</button>
           <button class="tool-btn" id="btn-draw-tool" title="Dessiner — re-cliquer pour changer d'outil" aria-label="Draw">✏️</button>
-          <button class="tool-btn" data-tool="pacman" title="Pacman grignoteur (glisse départ→arrivée)" aria-label="Pacman">🟡</button>
+          <button class="tool-btn" data-tool="pacman" title="Pacman grignoteur (glisse départ→arrivée)" aria-label="Pacman"><img src="./pacman.svg" alt="" class="tool-icon" /></button>
           <button class="tool-btn" data-tool="pan" title="Déplacer la vue (Espace)" aria-label="Pan">✋</button>
         </div>
         <div class="palette-row">
@@ -168,15 +168,17 @@
                 <button id="btn-rot-reset" class="iconbtn" title="Reset rotation">⟳ 0°</button>
               </div>
               <div class="transform-group" aria-label="Flip">
-                <button id="btn-flip-h" class="iconbtn" title="Flip horizontal" aria-label="Flip H">⇋</button>
-                <button id="btn-flip-v" class="iconbtn" title="Flip vertical" aria-label="Flip V">⇵</button>
+                <button id="btn-flip-h" class="iconbtn" title="Flip horizontal" aria-label="Flip H" aria-pressed="false">⇋</button>
+                <button id="btn-flip-v" class="iconbtn" title="Flip vertical" aria-label="Flip V" aria-pressed="false">⇵</button>
               </div>
-              <div class="transform-group transform-align" aria-label="Alignement">
-                <button data-align="left"    class="iconbtn" title="Aligner à gauche" aria-label="Align L">⇤</button>
+              <div class="transform-group transform-align" aria-label="Centrage">
                 <button data-align="centerH" class="iconbtn" title="Centrer horizontalement" aria-label="Align center H">⇔</button>
+                <button data-align="centerV" class="iconbtn" title="Centrer verticalement" aria-label="Align center V">⇕</button>
+              </div>
+              <div class="transform-group transform-align" aria-label="Alignement aux bords">
+                <button data-align="left"    class="iconbtn" title="Aligner à gauche" aria-label="Align L">⇤</button>
                 <button data-align="right"   class="iconbtn" title="Aligner à droite" aria-label="Align R">⇥</button>
                 <button data-align="top"     class="iconbtn" title="Aligner en haut" aria-label="Align top">⤒</button>
-                <button data-align="centerV" class="iconbtn" title="Centrer verticalement" aria-label="Align center V">⇕</button>
                 <button data-align="bottom"  class="iconbtn" title="Aligner en bas" aria-label="Align bottom">⤓</button>
               </div>
               <div class="transform-group" aria-label="Distribution">
@@ -190,6 +192,18 @@
               <div class="size-row">
                 <input type="range" id="size-slider" min="0" max="1" step="0.001" value="0.5" aria-label="Taille de l'item" />
                 <input type="number" inputmode="decimal" id="size-value" />
+              </div>
+            </div>
+
+            <div id="opacity-tools" class="selection-tools" hidden>
+              <div class="section-title">Opacité</div>
+              <div class="opacity-row">
+                <label class="opacity-toggle" title="Décocher pour masquer (opacité = 0)">
+                  <input type="checkbox" id="prop-visible" checked />
+                  <span>Visible</span>
+                </label>
+                <input type="range" id="prop-opacity" min="0" max="1" step="0.01" value="1" aria-label="Opacité" />
+                <input type="number" id="prop-opacity-value" min="0" max="1" step="0.01" value="1" inputmode="decimal" />
               </div>
             </div>
 

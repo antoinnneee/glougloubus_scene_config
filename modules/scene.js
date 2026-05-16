@@ -219,6 +219,19 @@ function materialize(obj, f) {
         f: ff,
       });
     }
+    // Flip H/V du Pacman : appliqué au NIVEAU DES DONNÉES (pas via une
+    // transform canvas) parce que drawPacman utilise getImageData en
+    // coordonnées brutes pour détecter ce qu'il « mange ». Mirroir autour
+    // de la tête (item.x, item.y == dernier point de la trace) → la tête
+    // reste sur place, la trace bascule de l'autre côté, la direction
+    // bouche / œil suit automatiquement (calculée à partir de la trace).
+    if (obj.static.flipX || obj.static.flipY) {
+      const cx = out.x, cy = out.y;
+      for (const p of trail) {
+        if (obj.static.flipX) p.x = 2 * cx - p.x;
+        if (obj.static.flipY) p.y = 2 * cy - p.y;
+      }
+    }
     out.trail = trail;
   }
   return out;
@@ -297,6 +310,7 @@ export function makeTextObject({ text, font, x, y, size, color, f = 0 }) {
   setKeyframe(obj, 'y', f, y);
   setKeyframe(obj, 'size', f, size);
   setKeyframe(obj, 'color', f, color);
+  setKeyframe(obj, 'rotation', f, 0);
   return obj;
 }
 
@@ -305,6 +319,7 @@ export function makeImageObject({ imgId, x, y, scale, f = 0 }) {
   setKeyframe(obj, 'x', f, x);
   setKeyframe(obj, 'y', f, y);
   setKeyframe(obj, 'scale', f, scale);
+  setKeyframe(obj, 'rotation', f, 0);
   return obj;
 }
 
@@ -313,6 +328,7 @@ export function makeDrawingObject({ points, color, f = 0 }) {
   setKeyframe(obj, 'x', f, 0);
   setKeyframe(obj, 'y', f, 0);
   setKeyframe(obj, 'color', f, color);
+  setKeyframe(obj, 'rotation', f, 0);
   return obj;
 }
 
@@ -329,6 +345,7 @@ export function makeShapeObject({ shape, x1, y1, x2, y2, color, f = 0 }) {
   setKeyframe(obj, 'x2', f, x2);
   setKeyframe(obj, 'y2', f, y2);
   setKeyframe(obj, 'color', f, color);
+  setKeyframe(obj, 'rotation', f, 0);
   return obj;
 }
 
@@ -342,6 +359,7 @@ export function makePacmanObject({ x1, y1, x2, y2, fStart = 0, fEnd = 0, size = 
   setKeyframe(obj, 'y', fStart, y1);
   setKeyframe(obj, 'y', fEnd, y2);
   setKeyframe(obj, 'size', fStart, size);
+  setKeyframe(obj, 'rotation', fStart, 0);
   return obj;
 }
 

@@ -93,6 +93,12 @@ const sizeTitle = document.getElementById('size-title');
 const sizeSlider = document.getElementById('size-slider');
 const sizeValue = document.getElementById('size-value');
 
+// Onglet Props : opacité (slider 0..1 + checkbox visible qui force à 0)
+const opacityTools = document.getElementById('opacity-tools');
+const propVisible = document.getElementById('prop-visible');
+const propOpacity = document.getElementById('prop-opacity');
+const propOpacityValue = document.getElementById('prop-opacity-value');
+
 // Config par type : prop ciblée + bornes du slider. step = pas du champ numérique.
 const SIZE_CONFIG = {
   text:   { prop: 'size',  min: 1,    max: 200, step: 1,    label: 'Taille (px)' },
@@ -1194,6 +1200,10 @@ function handlePointerUp(e) {
     pacmanPreview = null;
     isDragging = false;
     setSingleSelection(obj.id);
+    // Retour automatique à l'outil de sélection une fois le Pacman posé :
+    // l'utilisateur peut directement le manipuler (déplacement, rotation,
+    // resize, suppression) sans devoir cliquer à la main sur l'outil V.
+    setTool('select');
     renderCanvas();
     updateTimelineThumb(currentFrameIndex);
     updateSelectionUI();
@@ -1357,6 +1367,35 @@ function syncSizeControl(item) {
   }
 }
 
+// --- Opacité (onglet Props) ---
+// Slider 0..1 + champ numérique synchronisés, plus une checkbox « Visible »
+// qui force l'opacité à 0 quand décochée et la restaure à 1 (ou à la dernière
+// valeur > 0 mémorisée sur la checkbox) quand recochée.
+function syncOpacityControl(item) {
+  if (!opacityTools) return;
+  if (!item) { opacityTools.hidden = true; return; }
+  opacityTools.hidden = false;
+  const v = item.opacity != null ? item.opacity : 1;
+  if (propOpacity && document.activeElement !== propOpacity) {
+    propOpacity.value = String(v);
+  }
+  if (propOpacityValue && document.activeElement !== propOpacityValue) {
+    propOpacityValue.value = (Math.round(v * 100) / 100).toString();
+  }
+  if (propVisible) propVisible.checked = v > 0;
+}
+
+function applyOpacityValue(v) {
+  const obj = getObject(selectedItemId);
+  if (!obj) return;
+  const clamped = Math.max(0, Math.min(1, v));
+  updateObjectProp(obj, 'opacity', clamped);
+  if (propVisible) propVisible.checked = clamped > 0;
+  if (clamped > 0 && propVisible) propVisible.dataset.lastOpacity = String(clamped);
+  renderCanvas();
+  updateTimelineThumb(currentFrameIndex);
+}
+
 // Applique la taille depuis le slider ou le champ numérique vers l'objet.
 function applySizeFromControl(source) {
   const obj = getObject(selectedItemId);
@@ -1393,6 +1432,12 @@ function updateSelectionUI() {
   }
   // Slider de taille unifié (texte / image / pacman) — masqué sinon
   syncSizeControl(it);
+  // Opacité + visible : affiché dès qu'un item est sélectionné
+  syncOpacityControl(it);
+  // Reflète l'état flip H/V de l'item sur les boutons (toggle visible).
+  // Désélection ou multi-sélection hétérogène : remis à false par défaut.
+  if (btnFlipH) btnFlipH.setAttribute('aria-pressed', it && it.flipX ? 'true' : 'false');
+  if (btnFlipV) btnFlipV.setAttribute('aria-pressed', it && it.flipY ? 'true' : 'false');
   updateLayersPanel();
   // Re-render la timeline globale : les lanes dépendent de l'objet sélectionné
   renderTimeline();
@@ -2170,6 +2215,11 @@ function renderTimeline() {
         renderCanvas();
         renderTimeline();
       },
+      // Actions du menu contextuel (clic droit / long-press sur la timeline)
+      onDuplicateFrame(f) { duplicateFrameAt(f); },
+      onDeleteFrame(f) { deleteFrameAt(f); },
+      onClearObjectKeyframes() { clearKeyframesOfSelected(); },
+      onClearObjectKeyframesAtFrame(f) { clearKeyframesOfSelectedAtFrame(f); },
     },
   });
 }
@@ -2251,36 +2301,69 @@ function openAddFramesDialog() {
   addFramesSecondsInput.select();
 }
 
-function duplicateFrame() {
+function duplicateFrame() { duplicateFrameAt(currentFrameIndex); }
+function duplicateFrameAt(f) {
   if (project.frameCount === 0) return;
+  if (f < 0 || f >= project.frameCount) return;
   pushUndo();
-  // En v3, "dupliquer" la frame courante = insérer un nouveau slot juste après
-  // (les objets persistent), puis décaler les keyframes des frames suivantes.
-  shiftKeyframesAtOrAfter(currentFrameIndex + 1, +1);
+  // En v3, "dupliquer" la frame f = insérer un nouveau slot juste après
+  // (les objets persistent), puis décaler les keyframes des frames > f.
+  shiftKeyframesAtOrAfter(f + 1, +1);
   project.frameCount++;
-  currentFrameIndex++;
+  // Si le playhead était au-delà du point d'insertion, il faut le décaler
+  // pour rester sur la même frame logique.
+  if (currentFrameIndex > f) currentFrameIndex++;
   updateUI();
 }
 
-function deleteFrame() {
-  if (project.frameCount <= 1) {
-    // Cas dégénéré : on garde 1 frame mais on vide tout (purge keyframes à f=0
-    // pour les remettre à leur valeur par défaut). Plus simple : pas de purge,
-    // juste un signal "rien à faire".
-    return;
-  }
+function deleteFrame() { deleteFrameAt(currentFrameIndex); }
+function deleteFrameAt(f) {
+  if (project.frameCount <= 1) return;
+  if (f < 0 || f >= project.frameCount) return;
   pushUndo();
-  // Supprime les keyframes posés à currentFrameIndex et décale les suivants.
+  // Supprime les keyframes posés à f et décale les suivants vers la gauche.
   for (const obj of project.objects) {
     for (const prop of Object.keys(obj.tracks)) {
       const tr = obj.tracks[prop];
-      // Filtre les keyframes pile à currentFrameIndex puis shift les > currentFrameIndex
-      obj.tracks[prop] = tr.filter(k => k.f !== currentFrameIndex)
-                          .map(k => k.f > currentFrameIndex ? { ...k, f: k.f - 1 } : k);
+      obj.tracks[prop] = tr.filter(k => k.f !== f)
+                          .map(k => k.f > f ? { ...k, f: k.f - 1 } : k);
     }
   }
   project.frameCount--;
+  if (currentFrameIndex > f) currentFrameIndex--;
   if (currentFrameIndex >= project.frameCount) currentFrameIndex = project.frameCount - 1;
+  updateUI();
+}
+
+// Vide tous les keyframes de l'objet sélectionné. Pour ne pas faire disparaître
+// l'objet de l'écran, on capture sa valeur au frame courant pour chaque track
+// existante et on la réécrit comme unique keyframe à f=0 → l'objet est figé
+// dans son apparence courante sans plus aucune animation.
+function clearKeyframesOfSelected() {
+  const obj = getObject(selectedItemId);
+  if (!obj) return;
+  pushUndo();
+  for (const prop of Object.keys(obj.tracks)) {
+    const track = obj.tracks[prop];
+    if (!track || track.length === 0) continue;
+    const v = getValueAt(track, currentFrameIndex, track[0].v);
+    obj.tracks[prop] = [{ f: 0, v, easing: 'linear' }];
+  }
+  updateUI();
+}
+
+// Vide les keyframes de l'objet sélectionné UNIQUEMENT à la frame f (toutes
+// tracks confondues). Pas de shift sur les autres frames : c'est une coupe
+// chirurgicale qui retire seulement les dots posés exactement à f.
+function clearKeyframesOfSelectedAtFrame(f) {
+  const obj = getObject(selectedItemId);
+  if (!obj) return;
+  pushUndo();
+  for (const prop of Object.keys(obj.tracks)) {
+    const track = obj.tracks[prop];
+    if (!track || track.length === 0) continue;
+    obj.tracks[prop] = track.filter(k => k.f !== f);
+  }
   updateUI();
 }
 
@@ -3149,6 +3232,10 @@ function toggleFlip(axis /* 'x' | 'y' */) {
   renderCanvas();
   updateTimelineThumb(currentFrameIndex);
   updateLayersPanel();
+  // Met à jour l'état pressé des boutons flip pour refléter l'item primaire.
+  const primary = getObject(selectedItemId);
+  if (btnFlipH) btnFlipH.setAttribute('aria-pressed', primary && primary.static.flipX ? 'true' : 'false');
+  if (btnFlipV) btnFlipV.setAttribute('aria-pressed', primary && primary.static.flipY ? 'true' : 'false');
 }
 
 // Translate un objet (x/y ou x1/x2/y1/y2 pour shape) à la frame courante en
@@ -3503,6 +3590,45 @@ function initExtras() {
   });
   if (btnDistH) btnDistH.addEventListener('click', () => distributeSelection('h'));
   if (btnDistV) btnDistV.addEventListener('click', () => distributeSelection('v'));
+
+  // Opacité : slider + champ numérique + checkbox « Visible »
+  if (propOpacity) {
+    propOpacity.addEventListener('focus', () => { if (selectedItemId) pushUndo(); });
+    propOpacity.addEventListener('input', () => {
+      const v = parseFloat(propOpacity.value);
+      if (Number.isNaN(v)) return;
+      if (propOpacityValue) propOpacityValue.value = (Math.round(v * 100) / 100).toString();
+      applyOpacityValue(v);
+    });
+  }
+  if (propOpacityValue) {
+    propOpacityValue.addEventListener('focus', () => { if (selectedItemId) pushUndo(); });
+    propOpacityValue.addEventListener('input', () => {
+      const v = parseFloat(propOpacityValue.value);
+      if (Number.isNaN(v)) return;
+      if (propOpacity) propOpacity.value = String(Math.max(0, Math.min(1, v)));
+      applyOpacityValue(v);
+    });
+  }
+  if (propVisible) {
+    propVisible.addEventListener('change', () => {
+      if (!selectedItemId) return;
+      pushUndo();
+      if (propVisible.checked) {
+        const last = parseFloat(propVisible.dataset.lastOpacity || '1');
+        const v = Number.isFinite(last) && last > 0 ? last : 1;
+        if (propOpacity) propOpacity.value = String(v);
+        if (propOpacityValue) propOpacityValue.value = (Math.round(v * 100) / 100).toString();
+        applyOpacityValue(v);
+      } else {
+        const cur = propOpacity ? parseFloat(propOpacity.value) : 1;
+        if (Number.isFinite(cur) && cur > 0) propVisible.dataset.lastOpacity = String(cur);
+        if (propOpacity) propOpacity.value = '0';
+        if (propOpacityValue) propOpacityValue.value = '0';
+        applyOpacityValue(0);
+      }
+    });
+  }
 
   // Fullscreen
   if (btnFullscreen) btnFullscreen.addEventListener('click', toggleFullscreen);

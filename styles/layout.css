@@ -181,6 +181,14 @@
   transition: background 0.12s, transform 0.08s, box-shadow 0.12s;
 }
 .tool-btn:active { transform: scale(0.95); }
+.tool-btn .tool-icon {
+  width: 1.4rem;
+  height: 1.4rem;
+  display: block;
+  pointer-events: none;
+  -webkit-user-drag: none;
+  user-select: none;
+}
 .tool-btn.active {
   background: var(--accent-color);
   border-color: var(--accent-hover);
