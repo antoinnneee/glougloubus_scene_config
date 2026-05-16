@@ -42,6 +42,7 @@ function setPlayButtonsState(playing) {
   });
 }
 const inputFps = document.getElementById('fps-input');
+const inputTimelineViewSeconds = document.getElementById('timeline-view-seconds');
 const btnClear = document.getElementById('btn-clear-canvas');
 
 // --- BLE Config ---
@@ -169,9 +170,6 @@ const selectionInfo = document.getElementById('selection-info');
 const btnDeleteSelected = document.getElementById('btn-delete-selected');
 
 // Zoom controls
-const btnZoomIn = document.getElementById('btn-zoom-in');
-const btnZoomOut = document.getElementById('btn-zoom-out');
-const btnZoomReset = document.getElementById('btn-zoom-reset');
 const canvasWrapper = document.getElementById('canvas-wrapper');
 
 // Image dither
@@ -457,6 +455,19 @@ function init() {
 
   playButtons.forEach(b => b.addEventListener('click', togglePlay));
   inputFps.addEventListener('change', (e) => { setFps(parseInt(e.target.value) || 20); if(isPlaying) { stop(); play(); } });
+  if (inputTimelineViewSeconds) {
+    inputTimelineViewSeconds.value = String(timelineViewSeconds);
+    inputTimelineViewSeconds.addEventListener('change', (e) => {
+      const v = parseFloat(e.target.value);
+      if (!Number.isFinite(v) || v <= 0) { e.target.value = String(timelineViewSeconds); return; }
+      timelineViewSeconds = Math.max(1, Math.min(600, Math.round(v)));
+      e.target.value = String(timelineViewSeconds);
+      // La fenêtre peut être devenue trop grande / petite ; on recentre sur
+      // le playhead courant pour rester cohérent visuellement.
+      ensurePlayheadVisible();
+      renderTimeline();
+    });
+  }
 
   // Update button texts
   btnApplyImage.innerText = "Add Image";
@@ -914,6 +925,12 @@ function bucketFillAt(startX, startY, newColorHex) {
   const nr = parseInt(nh.slice(0,2), 16), ng = parseInt(nh.slice(2,4), 16), nb = parseInt(nh.slice(4,6), 16);
   if (tr === nr && tg === ng && tb === nb) return;
 
+  // Tolérance par canal. Les pixels du fond devraient être théoriquement
+  // identiques, mais en pratique des drifts subtils (GPU, color management
+  // Android, etc.) peuvent laisser quelques pixels off-by-1 qui cassaient
+  // le flood fill et laissaient des trous. 3/canal n'impacte pas la
+  // distinction entre couleurs réellement différentes.
+  const TOL = 3;
   const visited = new Uint8Array(WIDTH * HEIGHT);
   const stack = [[startX, startY]];
   const points = [];
@@ -923,7 +940,7 @@ function bucketFillAt(startX, startY, newColorHex) {
     const p = y * WIDTH + x;
     if (visited[p]) continue;
     const i = p * 4;
-    if (d[i] !== tr || d[i+1] !== tg || d[i+2] !== tb) continue;
+    if (Math.abs(d[i] - tr) > TOL || Math.abs(d[i+1] - tg) > TOL || Math.abs(d[i+2] - tb) > TOL) continue;
     visited[p] = 1;
     points.push({ x, y });
     stack.push([x+1, y], [x-1, y], [x, y+1], [x, y-1]);
@@ -1629,7 +1646,14 @@ function updateUI() {
 
 function drawItem(context, item) {
   const opacity = item.opacity != null ? item.opacity : 1;
-  if (opacity <= 0) return;
+  if (opacity <= 0) {
+    // Cas spécial Pacman : invisible mais doit continuer à "manger" sa trace,
+    // sinon tout le contenu déjà avalé sous le trajet ré-apparaît dès qu'on
+    // décoche Visible. On appelle drawPacman en mode bodyHidden : il fait
+    // seulement l'effacement BG le long du trajet, pas le corps/œil/miettes.
+    if (item.type === 'pacman') drawPacman(context, item, true);
+    return;
+  }
   context.save();
   if (opacity < 1) context.globalAlpha = opacity;
 
@@ -1684,7 +1708,7 @@ function pacmanRand(seed) {
 // Dessine un Pacman + sa trace mangée + ses miettes. item est enrichi par
 // materialize() : { x, y, size, color, f, animStartF, animEndF, trail[] }.
 // Tout est fonction pure de item.f → rendu déterministe.
-function drawPacman(context, item) {
+function drawPacman(context, item, bodyHidden = false) {
   const { x, y, f } = item;
   const r = item.size || 6;
   const trail = item.trail || [];
@@ -1771,6 +1795,10 @@ function drawPacman(context, item) {
     context.fill();
     context.restore();
   }
+
+  // Quand le Pacman est invisible (opacity = 0), on s'arrête ici : la trace
+  // est mangée (étape 3 ci-dessus) mais aucun corps/œil/miettes n'est rendu.
+  if (bodyHidden) return;
 
   // 4. Miettes : tombent doucement depuis chaque pixel mangé puis s'estompent.
   const CRUMB_LIFE = 16;   // durée de vie (frames)
@@ -2149,14 +2177,117 @@ function updateTimelineThumb(_index) {
   renderTimeline();
 }
 
+// --- Fenêtre visible de la timeline ---
+// Quand frameCount dépasse la fenêtre visible (= timelineViewSeconds × fps),
+// on n'affiche qu'une portion glissante. Le pan est manuel (boutons ◀/▶,
+// wheel) ; l'auto-follow n'est déclenché QUE quand le playhead bouge
+// réellement (seek/lecture), via ensurePlayheadVisible() — surtout pas à
+// chaque renderTimeline(), sinon le pan manuel se ferait reseter dès que
+// le playhead est hors fenêtre.
+let timelineViewStart = 0;
+let timelineViewSeconds = 3; // durée affichée par défaut (= 60 frames @ 20 fps)
+
+function getTimelineMaxVisible() {
+  const fps = Math.max(1, project.fps || 20);
+  return Math.max(1, Math.round(timelineViewSeconds * fps));
+}
+
+function computeTimelineView() {
+  const total = Math.max(1, project.frameCount);
+  const frames = Math.min(getTimelineMaxVisible(), total);
+  const maxStart = Math.max(0, total - frames);
+  const start = Math.max(0, Math.min(timelineViewStart, maxStart));
+  timelineViewStart = start; // normalisation (au cas où frameCount a diminué)
+  return { start, frames };
+}
+
+// Recale la fenêtre pour inclure currentFrameIndex si nécessaire (smooth-
+// follow : shift d'1 frame seulement quand le playhead sort d'un côté, le
+// playhead reste collé au bord du viewport). Utilisé pour la nav clavier
+// et les sauts ponctuels. Renvoie true si la fenêtre a effectivement bougé.
+function ensurePlayheadVisible() {
+  const total = Math.max(1, project.frameCount);
+  const frames = Math.min(getTimelineMaxVisible(), total);
+  const maxStart = Math.max(0, total - frames);
+  let start = timelineViewStart;
+  if (currentFrameIndex < start) start = currentFrameIndex;
+  else if (currentFrameIndex >= start + frames) start = currentFrameIndex - frames + 1;
+  start = Math.max(0, Math.min(start, maxStart));
+  if (start === timelineViewStart) return false;
+  timelineViewStart = start;
+  return true;
+}
+
+// Variante "page step" pour la lecture : quand le playhead sort de la
+// fenêtre, on saute d'une fenêtre entière (le playhead atterrit au début
+// du nouveau viewport), au lieu d'avancer pixel par pixel collé à la fin.
+// Plus lisible visuellement et moins de rebuilds DOM (~1 par fenêtre).
+function pageViewToPlayhead() {
+  const total = Math.max(1, project.frameCount);
+  const frames = Math.min(getTimelineMaxVisible(), total);
+  const maxStart = Math.max(0, total - frames);
+  let start = timelineViewStart;
+  if (currentFrameIndex < start || currentFrameIndex >= start + frames) {
+    start = currentFrameIndex;
+  }
+  start = Math.max(0, Math.min(start, maxStart));
+  if (start === timelineViewStart) return false;
+  timelineViewStart = start;
+  return true;
+}
+
+// Position en % du playhead dans la fenêtre visible courante. Utilisé par
+// la maj rapide du playhead pendant la lecture (sans rebuild DOM).
+function playheadPctInView() {
+  const total = Math.max(1, project.frameCount);
+  const frames = Math.min(getTimelineMaxVisible(), total);
+  if (frames <= 1) return 0;
+  return ((currentFrameIndex - timelineViewStart) / (frames - 1)) * 100;
+}
+
+// Pan = aussi déplacer la frame courante du même delta : le playhead garde
+// sa position relative dans la fenêtre. Sans ça, le clic sur ◀/▶ pendant
+// que le playhead est dans le viewport produisait une désync (la frame ne
+// suivait pas, et la moindre re-synchro auto re-centrait le viewport sur le
+// playhead, neutralisant le pan).
+function panTimelineBy(delta) {
+  const total = Math.max(1, project.frameCount);
+  const frames = Math.min(getTimelineMaxVisible(), total);
+  const maxStart = Math.max(0, total - frames);
+  const newStart = Math.max(0, Math.min(timelineViewStart + delta, maxStart));
+  const actualDelta = newStart - timelineViewStart;
+  if (actualDelta === 0) return;
+  timelineViewStart = newStart;
+  if (isPlaying) togglePlay();
+  currentFrameIndex = Math.max(0, Math.min(total - 1, currentFrameIndex + actualDelta));
+  renderCanvas();
+  renderTimeline();
+}
+
 function renderTimeline() {
   if (!timelineContainer) return;
   const selectedObj = getObject(selectedItemId);
+  const view = computeTimelineView();
   renderGlobalTimeline(timelineContainer, {
     project,
     currentFrame: currentFrameIndex,
     selectedObj,
+    viewStart: view.start,
+    viewFrames: view.frames,
     callbacks: {
+      onPan(delta) { panTimelineBy(delta); },
+      // Saut absolu à une frame (boutons ⏮/⏭ : début/fin). Recale aussi le
+      // viewport pour que la frame visée soit visible (effet snap à
+      // gauche/droite via ensurePlayheadVisible). Stoppe la lecture pour
+      // que le saut ne soit pas immédiatement écrasé par la frame suivante.
+      onJumpTo(f) {
+        const target = Math.max(0, Math.min(project.frameCount - 1, f));
+        if (isPlaying) togglePlay();
+        currentFrameIndex = target;
+        ensurePlayheadVisible();
+        renderCanvas();
+        renderTimeline();
+      },
       onSeek(f) {
         const target = Math.max(0, Math.min(project.frameCount - 1, f));
         if (target === currentFrameIndex) return;
@@ -2409,11 +2540,14 @@ function play() {
   playInterval = setInterval(() => {
     currentFrameIndex = (currentFrameIndex + 1) % project.frameCount;
     renderCanvas();
-    // Maj rapide du playhead sans re-render complet (= pas de DOM rebuild)
-    const ph = timelineContainer && timelineContainer.querySelector('.gtl-playhead');
-    if (ph) {
-      const pct = project.frameCount <= 1 ? 0 : (currentFrameIndex / (project.frameCount - 1)) * 100;
-      ph.style.left = `${pct}%`;
+    // Page-step en lecture : le playhead n'est pas collé au bord du
+    // viewport, il avance librement jusqu'à sortir, puis la fenêtre
+    // saute d'un bloc et le playhead repart de son début.
+    if (pageViewToPlayhead()) {
+      renderTimeline();
+    } else {
+      const ph = timelineContainer && timelineContainer.querySelector('.gtl-playhead');
+      if (ph) ph.style.left = `${playheadPctInView()}%`;
     }
   }, 1000 / project.fps);
 }
@@ -3022,9 +3156,6 @@ function initZoomPan() {
   canvasWrapper.addEventListener('pointerup', endPinch);
   canvasWrapper.addEventListener('pointercancel', endPinch);
 
-  if (btnZoomIn) btnZoomIn.addEventListener('click', () => setZoom(viewZoom * 1.25));
-  if (btnZoomOut) btnZoomOut.addEventListener('click', () => setZoom(viewZoom / 1.25));
-  if (btnZoomReset) btnZoomReset.addEventListener('click', resetZoom);
 }
 
 // ---- BLE test pattern ----
@@ -3174,10 +3305,10 @@ function initShortcuts() {
       e.preventDefault(); nudgeSelected(0, e.shiftKey ? 10 : 1); return;
     }
     if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
-      currentFrameIndex = Math.max(0, currentFrameIndex - 1); updateUI(); return;
+      currentFrameIndex = Math.max(0, currentFrameIndex - 1); ensurePlayheadVisible(); updateUI(); return;
     }
     if (e.key === 'ArrowRight' || e.key === 'PageDown') {
-      currentFrameIndex = Math.min(project.frameCount - 1, currentFrameIndex + 1); updateUI(); return;
+      currentFrameIndex = Math.min(project.frameCount - 1, currentFrameIndex + 1); ensurePlayheadVisible(); updateUI(); return;
     }
   });
 }

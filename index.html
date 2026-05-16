@@ -67,10 +67,6 @@
         </div>
         <div class="canvas-toolbar">
           <button id="btn-delete-selected" class="iconbtn danger" disabled title="Supprimer la sélection (Del)" aria-label="Supprimer">🗑</button>
-          <span class="spacer"></span>
-          <button id="btn-zoom-out" class="iconbtn" title="Zoom −" aria-label="Zoom out">−</button>
-          <button id="btn-zoom-reset" class="iconbtn" title="Reset zoom" aria-label="Reset zoom">1:1</button>
-          <button id="btn-zoom-in" class="iconbtn" title="Zoom +" aria-label="Zoom in">+</button>
         </div>
       </section>
 
@@ -98,6 +94,11 @@
               <label class="fps-control" title="Frames per second">
                 <span>FPS</span>
                 <input type="number" inputmode="numeric" id="fps-input" value="20" min="1" max="60" />
+              </label>
+              <label class="fps-control" title="Durée visible dans la timeline (s)">
+                <span>Vue</span>
+                <input type="number" inputmode="numeric" id="timeline-view-seconds" value="3" min="1" max="600" step="1" />
+                <span class="ext-hint">s</span>
               </label>
               <span class="spacer"></span>
               <button id="btn-add-frame" class="iconbtn" title="Ajouter frame" aria-label="Ajouter">＋</button>
