@@ -154,27 +154,31 @@ export function renderGlobalTimeline(container, { project, currentFrame, selecte
   container.appendChild(lanesWrap);
 }
 
-// Drag horizontal sur un élément pour scrubber la frame
+// Drag horizontal sur un élément pour scrubber la frame.
+// Note importante : le premier seek déclenche un renderTimeline() côté host qui
+// détruit `el` (innerHTML = ''). On capture donc la geometry une fois au
+// pointerdown et on écoute move/up sur window — sinon les pointermove
+// suivants partent dans un élément orphelin et le drag ne marche pas.
 function attachScrub(el, frameCount, onSeek) {
   el.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
     if (e.target.classList.contains('gtl-dot')) return; // les dots gèrent leur propre drag
-    el.setPointerCapture(e.pointerId);
-    const seek = (ev) => {
-      const rect = el.getBoundingClientRect();
-      const f = Math.round(((ev.clientX - rect.left) / rect.width) * (frameCount - 1));
+    const rect = el.getBoundingClientRect();
+    e.preventDefault();
+    const seek = (clientX) => {
+      const f = Math.round(((clientX - rect.left) / rect.width) * (frameCount - 1));
       onSeek(Math.max(0, Math.min(frameCount - 1, f)));
     };
-    seek(e);
-    const onMove = (ev) => seek(ev);
+    seek(e.clientX);
+    const onMove = (ev) => seek(ev.clientX);
     const onUp = () => {
-      el.removeEventListener('pointermove', onMove);
-      el.removeEventListener('pointerup', onUp);
-      el.removeEventListener('pointercancel', onUp);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
     };
-    el.addEventListener('pointermove', onMove);
-    el.addEventListener('pointerup', onUp);
-    el.addEventListener('pointercancel', onUp);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
   });
 }
 

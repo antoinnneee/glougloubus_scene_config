@@ -24,7 +24,6 @@ import {
   makeShapeObject,
   makePacmanObject,
 } from './modules/scene.js';
-import { renderKeyframeEditor } from './modules/keyframe-editor.js';
 import { renderLayersPanel } from './modules/layers-panel.js';
 import { renderGlobalTimeline } from './modules/timeline-global.js';
 
@@ -124,14 +123,6 @@ const btnLayerDuplicate = document.getElementById('btn-layer-duplicate');
 const btnLayerDelete = document.getElementById('btn-layer-delete');
 const btnLayerGroup = document.getElementById('btn-layer-group');
 const btnLayerUngroup = document.getElementById('btn-layer-ungroup');
-
-// Animation (Phase 2 : éditeur de keyframes)
-const kfEditorEl = document.getElementById('kf-editor');
-const btnPresetScrollL = document.getElementById('btn-preset-scroll-left');
-const btnPresetScrollR = document.getElementById('btn-preset-scroll-right');
-const btnPresetBlink = document.getElementById('btn-preset-blink');
-const btnPresetFadeIn = document.getElementById('btn-preset-fadein');
-const btnPresetFadeOut = document.getElementById('btn-preset-fadeout');
 
 // Undo/Redo/Project
 const btnUndo = document.getElementById('btn-undo');
@@ -405,6 +396,13 @@ const modalMessage = document.getElementById('modal-message');
 const modalBtnConfirm = document.getElementById('modal-btn-confirm');
 const modalBtnCancel = document.getElementById('modal-btn-cancel');
 
+// --- Add-frames modal (popup du + de la timeline) ---
+const addFramesModal = document.getElementById('add-frames-modal');
+const addFramesSecondsInput = document.getElementById('add-frames-seconds');
+const addFramesPreview = document.getElementById('add-frames-preview');
+const addFramesConfirmBtn = document.getElementById('add-frames-confirm');
+const addFramesCancelBtn = document.getElementById('add-frames-cancel');
+
 function showModal(title, message, showCancel = false) {
   return new Promise((resolve) => {
     modalTitle.innerText = title;
@@ -433,8 +431,20 @@ function init() {
   // Project déjà initialisé avec frameCount=1
   updateUI();
 
+  // Bloque le menu contextuel par défaut (notamment le « Télécharger /
+  // Partager / Imprimer » d'Android Chrome sur long-press d'images/canvas,
+  // qui interfère avec les long-press internes : keyframes, etc.).
+  // On laisse passer pour les champs éditables — sinon plus de copier/coller.
+  document.addEventListener('contextmenu', (e) => {
+    const t = e.target;
+    if (t && (t.matches?.('input, textarea, [contenteditable], [contenteditable=""], [contenteditable="true"]'))) {
+      return;
+    }
+    e.preventDefault();
+  });
+
   // Event Listeners
-  btnAddFrame.addEventListener('click', addFrame);
+  btnAddFrame.addEventListener('click', openAddFramesDialog);
   btnDupFrame.addEventListener('click', duplicateFrame);
   btnDelFrame.addEventListener('click', deleteFrame);
   btnClear.addEventListener('click', clearCurrentFrame);
@@ -1383,7 +1393,6 @@ function updateSelectionUI() {
   }
   // Slider de taille unifié (texte / image / pacman) — masqué sinon
   syncSizeControl(it);
-  updateKeyframeEditor();
   updateLayersPanel();
   // Re-render la timeline globale : les lanes dépendent de l'objet sélectionné
   renderTimeline();
@@ -1500,64 +1509,6 @@ function updateLayersPanel() {
   const has = !!selectedItemId;
   [btnLayerUp, btnLayerDown, btnLayerDuplicate, btnLayerDelete].forEach(b => {
     if (b) b.disabled = !has;
-  });
-}
-
-function updateKeyframeEditor() {
-  if (!kfEditorEl) return;
-  const obj = getObject(selectedItemId);
-  renderKeyframeEditor(kfEditorEl, {
-    obj,
-    currentFrame: currentFrameIndex,
-    frameCount: project.frameCount,
-    callbacks: {
-      onAdd(prop, f) {
-        if (!obj) return;
-        const it = currentItems().find(i => i.sourceId === obj.id);
-        const v = (it && it[prop] !== undefined) ? it[prop] : (obj.tracks[prop]?.[0]?.v ?? 0);
-        pushUndo();
-        setKeyframe(obj, prop, f, v);
-        renderCanvas();
-        updateKeyframeEditor();
-      },
-      onRemove(prop, f) {
-        if (!obj) return;
-        pushUndo();
-        removeKeyframe(obj, prop, f);
-        renderCanvas();
-        updateKeyframeEditor();
-      },
-      onSeek(f) {
-        currentFrameIndex = Math.max(0, Math.min(project.frameCount - 1, f));
-        renderCanvas();
-        renderTimeline();
-        updateKeyframeEditor();
-      },
-      onMove(prop, oldF, newF) {
-        if (!obj) return;
-        const track = obj.tracks[prop];
-        if (!track) return;
-        const kf = track.find(k => k.f === oldF);
-        if (!kf) return;
-        const { v, easing } = kf;
-        pushUndo();
-        removeKeyframe(obj, prop, oldF);
-        setKeyframe(obj, prop, newF, v, easing);
-        renderCanvas();
-        updateKeyframeEditor();
-      },
-      onEasing(prop, f, easing) {
-        if (!obj) return;
-        const track = obj.tracks[prop];
-        if (!track) return;
-        const kf = track.find(k => k.f === f);
-        if (!kf) return;
-        pushUndo();
-        kf.easing = easing;
-        renderCanvas();
-        updateKeyframeEditor();
-      },
-    },
   });
 }
 
@@ -2168,7 +2119,6 @@ function renderTimeline() {
         if (isPlaying) togglePlay();
         renderCanvas();
         renderTimeline();
-        updateKeyframeEditor();
       },
       onAddKf(prop, f) {
         const obj = getObject(selectedItemId);
@@ -2185,7 +2135,6 @@ function renderTimeline() {
         setKeyframe(obj, prop, f, v);
         renderCanvas();
         renderTimeline();
-        updateKeyframeEditor();
       },
       onMoveKf(prop, oldF, newF) {
         const obj = getObject(selectedItemId);
@@ -2200,7 +2149,6 @@ function renderTimeline() {
         setKeyframe(obj, prop, newF, v, easing);
         renderCanvas();
         renderTimeline();
-        updateKeyframeEditor();
       },
       onRemoveKf(prop, f) {
         const obj = getObject(selectedItemId);
@@ -2209,7 +2157,6 @@ function renderTimeline() {
         removeKeyframe(obj, prop, f);
         renderCanvas();
         renderTimeline();
-        updateKeyframeEditor();
       },
       onSetEasing(prop, f, easing) {
         const obj = getObject(selectedItemId);
@@ -2222,7 +2169,6 @@ function renderTimeline() {
         kf.easing = easing;
         renderCanvas();
         renderTimeline();
-        updateKeyframeEditor();
       },
     },
   });
@@ -2251,11 +2197,58 @@ function shiftKeyframesForReorder(from, to) {
 // Note v3 : ajouter/dupliquer une frame = juste étendre frameCount. Les objets
 // existent globalement et restent visibles sur toute la timeline tant qu'ils
 // n'ont pas de visibleRanges qui dit le contraire.
-function addFrame() {
+function addFrame(count = 1) {
+  const n = Math.max(1, Math.floor(count));
   pushUndo();
-  project.frameCount++;
+  project.frameCount += n;
   currentFrameIndex = project.frameCount - 1;
   updateUI();
+}
+
+// Popup déclenché par le + de la timeline : saisie en secondes,
+// conversion live en frames selon le FPS courant, et aperçu de la
+// durée totale projetée. Renvoie au final un appel à addFrame(N).
+function openAddFramesDialog() {
+  if (!addFramesModal) return;
+  const fps = Math.max(1, project.fps || 20);
+
+  function refresh() {
+    const seconds = Math.max(0, parseFloat(addFramesSecondsInput.value) || 0);
+    const frames = Math.max(1, Math.round(seconds * fps));
+    const finalFrames = project.frameCount + frames;
+    const finalSeconds = finalFrames / fps;
+    addFramesPreview.textContent =
+      `= ${frames} frame${frames > 1 ? 's' : ''} à ${fps} FPS. ` +
+      `Animation finale : ${finalSeconds.toFixed(2)} s (${finalFrames} frames).`;
+    addFramesConfirmBtn.dataset.frames = String(frames);
+  }
+
+  function onConfirm() {
+    const frames = parseInt(addFramesConfirmBtn.dataset.frames || '0', 10);
+    cleanup();
+    if (frames > 0) addFrame(frames);
+  }
+  function onCancel() { cleanup(); }
+  function onInput() { refresh(); }
+  function onKey(e) {
+    if (e.key === 'Enter') { e.preventDefault(); onConfirm(); }
+  }
+  function cleanup() {
+    addFramesConfirmBtn.removeEventListener('click', onConfirm);
+    addFramesCancelBtn.removeEventListener('click', onCancel);
+    addFramesSecondsInput.removeEventListener('input', onInput);
+    addFramesModal.removeEventListener('keydown', onKey);
+    addFramesModal.close();
+  }
+
+  addFramesConfirmBtn.addEventListener('click', onConfirm);
+  addFramesCancelBtn.addEventListener('click', onCancel);
+  addFramesSecondsInput.addEventListener('input', onInput);
+  addFramesModal.addEventListener('keydown', onKey);
+  refresh();
+  addFramesModal.showModal();
+  addFramesSecondsInput.focus();
+  addFramesSecondsInput.select();
 }
 
 function duplicateFrame() {
@@ -2727,70 +2720,6 @@ async function streamToBle() {
 // =========================================================================
 // === EXTRAS : easing, presets, palette, save/load, dithering, zoom, GIF ===
 // =========================================================================
-
-// ---- Animation presets (V3 : pose des keyframes) ----
-function presetScroll(direction) {
-  const obj = getObject(selectedItemId);
-  if (!obj) { showModal('Notice', 'Sélectionne un item d\'abord.', false); return; }
-  const it = currentItems().find(i => i.sourceId === obj.id);
-  if (!it) return;
-  const b = getItemBounds(it);
-  const y = Math.round(b.y);
-  const color = it.color || '#ffffff';
-  const startF = currentFrameIndex;
-  const endF = currentFrameIndex + 39;
-  let startX, endX;
-  if (direction === 'left') {
-    startX = WIDTH; endX = -Math.round(b.width);
-  } else {
-    startX = -Math.round(b.width); endX = WIDTH;
-  }
-  pushUndo();
-  setKeyframe(obj, 'x', startF, startX, 'linear');
-  setKeyframe(obj, 'y', startF, y, 'linear');
-  setKeyframe(obj, 'color', startF, color, 'linear');
-  setKeyframe(obj, 'x', endF, endX, 'linear');
-  setKeyframe(obj, 'y', endF, y, 'linear');
-  setKeyframe(obj, 'color', endF, color, 'linear');
-  if (project.frameCount <= endF) project.frameCount = endF + 1;
-  renderCanvas();
-  renderTimeline();
-  updateKeyframeEditor();
-}
-
-function presetBlink() {
-  const obj = getObject(selectedItemId);
-  if (!obj) { showModal('Notice','Sélectionne un item.', false); return; }
-  pushUndo();
-  const total = 8;
-  for (let i = 0; i < total; i++) {
-    setKeyframe(obj, 'opacity', currentFrameIndex + i, i % 2 === 0 ? 1 : 0, 'linear');
-  }
-  const endF = currentFrameIndex + total - 1;
-  if (project.frameCount <= endF) project.frameCount = endF + 1;
-  renderCanvas();
-  renderTimeline();
-  updateKeyframeEditor();
-}
-
-function presetFade(dir) {
-  const obj = getObject(selectedItemId);
-  if (!obj) { showModal('Notice','Sélectionne un item.', false); return; }
-  pushUndo();
-  const startF = currentFrameIndex;
-  const endF = currentFrameIndex + 19;
-  if (dir === 'in') {
-    setKeyframe(obj, 'opacity', startF, 0, 'linear');
-    setKeyframe(obj, 'opacity', endF,   1, 'ease-in-out');
-  } else {
-    setKeyframe(obj, 'opacity', startF, 1, 'linear');
-    setKeyframe(obj, 'opacity', endF,   0, 'ease-in-out');
-  }
-  if (project.frameCount <= endF) project.frameCount = endF + 1;
-  renderCanvas();
-  renderTimeline();
-  updateKeyframeEditor();
-}
 
 // ---- Palette ----
 function renderPalette() {
@@ -3581,13 +3510,6 @@ function initExtras() {
   // Zoom/Pan
   initZoomPan();
 
-  // Animation presets + easing
-  if (btnPresetScrollL) btnPresetScrollL.addEventListener('click', () => presetScroll('left'));
-  if (btnPresetScrollR) btnPresetScrollR.addEventListener('click', () => presetScroll('right'));
-  if (btnPresetBlink) btnPresetBlink.addEventListener('click', presetBlink);
-  if (btnPresetFadeIn) btnPresetFadeIn.addEventListener('click', () => presetFade('in'));
-  if (btnPresetFadeOut) btnPresetFadeOut.addEventListener('click', () => presetFade('out'));
-
   // BLE test pattern
   if (btnBleTestPattern) {
     btnBleTestPattern.disabled = true;
@@ -3652,7 +3574,6 @@ function initExtras() {
 
   // Bottom sheet (mobile UI)
   initBottomSheet({ onTabChange: tab => {
-    if (tab === 'anim') updateKeyframeEditor();
     if (tab === 'timeline') renderTimeline();
   }});
 

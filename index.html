@@ -84,7 +84,6 @@
             <button class="tab" data-tab="props" role="tab">⚙ Props</button>
             <button class="tab" data-tab="text" role="tab">🅣 Texte</button>
             <button class="tab" data-tab="image" role="tab">🖼 Image</button>
-            <button class="tab" data-tab="anim" role="tab">▶ Anim</button>
             <button class="tab" data-tab="export" role="tab">⬇ Export</button>
             <button class="tab" data-tab="project" role="tab">💾 Projet</button>
           </div>
@@ -258,20 +257,6 @@
             <p class="hint">Tape une vignette pour l'ajouter à la scène. Dépose des images dans <code>asset/</code> pour enrichir la liste.</p>
           </div>
 
-          <!-- PANE: Animation -->
-          <div class="tab-pane" data-pane="anim" role="tabpanel" hidden>
-            <div id="kf-editor"></div>
-
-            <div class="section-title">Presets</div>
-            <div class="preset-grid">
-              <button id="btn-preset-scroll-left" class="btn outline">↞ Scroll</button>
-              <button id="btn-preset-scroll-right" class="btn outline">Scroll ↠</button>
-              <button id="btn-preset-blink" class="btn outline">Blink</button>
-              <button id="btn-preset-fadein" class="btn outline">Fade In</button>
-              <button id="btn-preset-fadeout" class="btn outline">Fade Out</button>
-            </div>
-          </div>
-
           <!-- PANE: Export & BLE -->
           <div class="tab-pane" data-pane="export" role="tabpanel" hidden>
             <div class="row">
@@ -331,6 +316,22 @@
         </div>
       </section>
     </div>
+
+    <!-- Add-frames dialog (ouvert par le + de la timeline) -->
+    <dialog id="add-frames-modal" class="modal">
+      <div class="modal-content">
+        <h3>Ajouter de l'animation</h3>
+        <label class="grow">
+          <span>Durée à ajouter (secondes)</span>
+          <input type="number" id="add-frames-seconds" value="1" min="0" step="0.1" inputmode="decimal" />
+        </label>
+        <p id="add-frames-preview" class="hint">…</p>
+        <div class="modal-actions">
+          <button id="add-frames-cancel" class="btn outline">Annuler</button>
+          <button id="add-frames-confirm" class="btn primary">Ajouter</button>
+        </div>
+      </div>
+    </dialog>
 
     <!-- Custom Modal Dialog -->
     <dialog id="custom-modal" class="modal">
