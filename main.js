@@ -1800,11 +1800,14 @@ function drawPacman(context, item, bodyHidden = false) {
   // est mangée (étape 3 ci-dessus) mais aucun corps/œil/miettes n'est rendu.
   if (bodyHidden) return;
 
-  // 4. Miettes : tombent doucement depuis chaque pixel mangé puis s'estompent.
-  const CRUMB_LIFE = 16;   // durée de vie (frames)
-  const GRAVITY = 0.05;    // accélération verticale douce (px/frame²)
-  const CRUMBS_PER = 2;    // miettes générées par pixel mangé
+  // 4. Miettes : tombent depuis chaque pixel mangé jusqu'à sortir par le bas
+  //    du panneau ("à l'infini"). Pas de fade : visibilité constante tant
+  //    qu'elles sont à l'écran, elles disparaissent uniquement en y >= HEIGHT.
+  const CRUMB_LIFE = 50;   // durée de vie (frames) — assez longue pour traverser tout le panneau
+  const GRAVITY = 0.11;    // accélération verticale (px/frame²)
+  const CRUMBS_PER = 5;    // miettes générées par pixel mangé
   context.save();
+  context.globalAlpha = 1;
   for (const e of eaten) {
     const age = f - e.f;
     if (age < 0 || age >= CRUMB_LIFE) continue;
@@ -1816,12 +1819,11 @@ function drawPacman(context, item, bodyHidden = false) {
       const sRad = pacmanRand(seed + 5) * (e.size || r);
       const sx = e.x + Math.cos(sAng) * sRad;
       const sy = e.y + Math.sin(sAng) * sRad;
-      const vx = (pacmanRand(seed) - 0.5) * 0.6;
-      const vy = pacmanRand(seed + 7) * 0.25;
+      const vx = (pacmanRand(seed) - 0.5) * 0.5;
+      const vy = pacmanRand(seed + 7) * 0.3;
       const cx = sx + vx * age;
       const cy = sy + vy * age + 0.5 * GRAVITY * age * age;
-      if (cy >= HEIGHT) continue;
-      context.globalAlpha = Math.max(0, 1 - age / CRUMB_LIFE);
+      if (cy >= HEIGHT) continue; // sortie par le bas = "à l'infini"
       context.fillStyle = e.color;
       context.fillRect(Math.round(cx), Math.round(cy), 1, 1);
     }
