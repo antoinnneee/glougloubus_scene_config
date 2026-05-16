@@ -470,6 +470,57 @@ body.preview-mode .app-shell {
 }
 body.preview-mode .stage { padding: 0; background: #000; }
 
+/* ============== DESKTOP SIDE PANEL (>= 1024px) ============== */
+/* Par defaut (mobile/tablette etroit) la side panel est masquee et le panneau
+   Calques vit dans la sheet. Sur PC large, on la fait apparaitre a droite du
+   stage et le JS y reparente le tab-pane des Calques. */
+.desktop-side-panel { display: none; }
+
+@media (min-width: 1024px) {
+  :root {
+    --side-panel-w: 280px;
+  }
+  .app-shell {
+    grid-template-columns: 1fr var(--side-panel-w);
+    grid-template-rows: var(--topbar-h) var(--dock-h) 1fr;
+  }
+  .topbar, .dock { grid-column: 1 / -1; }
+  .stage       { grid-column: 1; }
+  .desktop-side-panel {
+    display: flex;
+    flex-direction: column;
+    grid-column: 2;
+    background: var(--bg-panel);
+    border-left: 1px solid rgba(255, 255, 255, 0.06);
+    min-height: 0;
+    overflow: hidden;
+  }
+  /* Quand le tab-pane Calques est reparente dans la side panel, on force son
+     affichage (sinon l'attribut [hidden] du systeme de tabs le masquerait). */
+  .desktop-side-panel > .tab-pane[data-pane="layers"] {
+    display: flex !important;
+    flex-direction: column;
+    gap: 0.45rem;
+    padding: 0.55rem 0.65rem;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+  }
+  /* Le panneau prend toute la hauteur dispo plutot que la limite mobile 50dvh */
+  .desktop-side-panel .layers-list {
+    max-height: none;
+    flex: 1;
+  }
+  /* La sheet ne couvre plus toute la largeur : on libere la colonne droite
+     pour laisser la side panel toujours visible. */
+  .sheet { right: var(--side-panel-w); }
+  /* L'onglet Calques de la sheet devient inutile sur desktop. */
+  .sheet-tabs .tab[data-tab="layers"] { display: none; }
+  /* En mode preview/fullscreen on cache aussi la side panel. */
+  body.preview-mode .desktop-side-panel { display: none !important; }
+  body.preview-mode .app-shell { grid-template-columns: 1fr; }
+}
+
 /* ============== TABLET / WIDE ============== */
 @media (min-width: 768px) {
   :root {

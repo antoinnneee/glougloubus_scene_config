@@ -454,6 +454,13 @@ function init() {
   btnClear.addEventListener('click', clearCurrentFrame);
 
   playButtons.forEach(b => b.addEventListener('click', togglePlay));
+  const btnJumpStart = document.getElementById('btn-jump-start');
+  if (btnJumpStart) btnJumpStart.addEventListener('click', () => {
+    if (isPlaying) togglePlay();
+    currentFrameIndex = 0;
+    ensurePlayheadVisible();
+    updateUI();
+  });
   inputFps.addEventListener('change', (e) => { setFps(parseInt(e.target.value) || 20); if(isPlaying) { stop(); play(); } });
   if (inputTimelineViewSeconds) {
     inputTimelineViewSeconds.value = String(timelineViewSeconds);
@@ -3842,9 +3849,53 @@ function initExtras() {
     if (tab === 'timeline') renderTimeline();
   }});
 
+  // Sur ecran large (>=1024px), le pane Calques est reparente dans la side
+  // panel droite pour rester affiche en permanence pendant qu'on utilise
+  // Timeline ou Props dans la sheet. Sur petit ecran, il revient dans la sheet.
+  setupDesktopSidePanel();
+
   // Autosave restore + register PWA
   tryRestoreAutosave();
   registerPwa();
 }
 
 // (initBottomSheet est dans modules/sheet.js — l'auto-open est appelé depuis updateSelectionUI)
+
+// Reparente le tab-pane "Calques" entre la sheet (mobile) et la side panel
+// droite (desktop >=1024px). On garde le MEME element DOM (pas de duplication)
+// pour que tous les listeners attachés par renderLayersPanel + les boutons
+// avec IDs uniques (#btn-layer-*) continuent de marcher dans les deux modes.
+function setupDesktopSidePanel() {
+  const sidePanel = document.getElementById('desktop-side-panel');
+  const sheetBody = document.querySelector('.sheet-body');
+  const layersPane = document.querySelector('.tab-pane[data-pane="layers"]');
+  const layersTab = document.querySelector('.sheet-tabs .tab[data-tab="layers"]');
+  if (!sidePanel || !sheetBody || !layersPane) return;
+
+  const mq = window.matchMedia('(min-width: 1024px)');
+  const apply = () => {
+    if (mq.matches) {
+      // Desktop : pane dans la side panel, toujours visible.
+      if (layersPane.parentElement !== sidePanel) sidePanel.appendChild(layersPane);
+      layersPane.hidden = false;
+      // Si l'onglet Calques etait actif dans la sheet, basculer sur timeline
+      // pour eviter que la sheet ait aucun pane visible.
+      if (layersTab && layersTab.classList.contains('active')) {
+        const timelineTab = document.querySelector('.sheet-tabs .tab[data-tab="timeline"]');
+        timelineTab?.click();
+      }
+    } else {
+      // Mobile/tablette : pane retourne dans la sheet, soumis au systeme de tabs.
+      if (layersPane.parentElement !== sheetBody) sheetBody.appendChild(layersPane);
+      // Restaure l'etat hidden selon l'onglet actif (la sheet gere ca elle-meme
+      // au prochain switch, mais on remet hidden=true par defaut pour ne pas
+      // afficher 2 panes en meme temps).
+      const activeTab = document.querySelector('.sheet-tabs .tab.active');
+      layersPane.hidden = !(activeTab && activeTab.dataset.tab === 'layers');
+    }
+  };
+  apply();
+  // Support des navigateurs sans addEventListener sur MediaQueryList (Safari ancien)
+  if (mq.addEventListener) mq.addEventListener('change', apply);
+  else if (mq.addListener) mq.addListener(apply);
+}

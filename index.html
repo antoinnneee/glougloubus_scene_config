@@ -39,6 +39,7 @@
         <button id="btn-undo" class="iconbtn" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>↶</button>
         <button id="btn-redo" class="iconbtn" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" disabled>↷</button>
         <h1 class="brand">🚍 Glougloubus</h1>
+        <button id="btn-jump-start" class="iconbtn" title="Revenir au début" aria-label="Revenir au début">⏮</button>
         <button id="btn-play-pause" class="btn primary play-btn" title="Play/Pause (Espace)">▶</button>
         <span id="ble-status-badge" class="ble-dot" data-state="disconnected" title="BLE" aria-hidden="true"></span>
         <button id="btn-fullscreen" class="iconbtn" title="Plein écran" aria-label="Plein écran">⛶</button>
@@ -69,6 +70,11 @@
           <button id="btn-delete-selected" class="iconbtn danger" disabled title="Supprimer la sélection (Del)" aria-label="Supprimer">🗑</button>
         </div>
       </section>
+
+      <!-- DESKTOP SIDE PANEL : visible uniquement sur ecran large (>=1024px).
+           Le panneau Calques y est reparente par JS pour rester affiche en
+           permanence pendant qu'on utilise Timeline ou Props dans la sheet. -->
+      <aside id="desktop-side-panel" class="desktop-side-panel" aria-label="Panneau lateral"></aside>
 
       <!-- BOTTOM SHEET -->
       <section class="sheet" id="bottom-sheet" data-state="peek" aria-label="Panneau d'outils">
@@ -133,7 +139,6 @@
               <button id="btn-layer-delete" class="iconbtn danger" title="Supprimer" aria-label="Supprimer">🗑</button>
             </div>
             <div id="layers-list" class="layers-list"></div>
-            <p class="hint">Tape un calque pour le sélectionner. Glisse la poignée ⠿ pour réordonner. Double-tap le nom pour renommer.</p>
           </div>
 
           <!-- PANE: Props (canvas options + selection editor) -->
@@ -234,7 +239,6 @@
                 </select>
               </label>
             </div>
-            <p class="hint">Position : glisse le texte sur le canvas. Taille : slider de l'onglet Props.</p>
             <button id="btn-apply-text" class="btn primary">Ajouter le texte</button>
           </div>
 
