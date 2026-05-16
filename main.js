@@ -1207,18 +1207,17 @@ function handlePointerUp(e) {
     updateLayersPanel();
   }
 
-  // Commit Pacman preview en objet réel : 2 keyframes x/y (départ → arrivée).
-  // Le déplacement dure 20 frames par défaut ; on étend frameCount si besoin
-  // pour que la keyframe de fin tienne dans la timeline.
+  // Commit Pacman preview en objet réel : pose-le simplement à la position
+  // de relâchement, sans animation automatique. L'utilisateur ajoutera des
+  // keyframes x/y manuellement plus tard pour créer un déplacement.
   if (pacmanPreview) {
     pushUndo();
     const fStart = currentFrameIndex;
-    let fEnd = currentFrameIndex + 20;
-    if (fEnd > project.frameCount - 1) project.frameCount = fEnd + 1;
+    const px = pacmanPreview.x2, py = pacmanPreview.y2;
     const obj = makePacmanObject({
-      x1: pacmanPreview.x1, y1: pacmanPreview.y1,
-      x2: pacmanPreview.x2, y2: pacmanPreview.y2,
-      fStart, fEnd, size: pacmanPreview.size,
+      x1: px, y1: py,
+      x2: px, y2: py,
+      fStart, fEnd: fStart, size: pacmanPreview.size,
     });
     project.objects.push(obj);
     pacmanPreview = null;
