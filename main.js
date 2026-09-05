@@ -1,4 +1,6 @@
 import './style.css';
+import { initBeginnerEditor } from './modules/beginner.js';
+import { applyBeginnerTemplate } from './modules/beginner-scene.js';
 import { WIDTH, HEIGHT, mapToLedIndex, hslToRgb } from './modules/led-mapping.js';
 import { applyEasing } from './modules/easing.js';
 import {
@@ -30,16 +32,22 @@ import { renderGlobalTimeline } from './modules/timeline-global.js';
 // --- DOM Elements ---
 const canvas = document.getElementById('led-canvas');
 const ctx = canvas.getContext('2d', { willReadFrequently: true });
+const workspaceOverlay = document.getElementById('workspace-overlay');
+const workspaceCtx = workspaceOverlay?.getContext('2d') || null;
+const interactionSurface = workspaceOverlay || canvas;
 
 // Plusieurs boutons play/pause peuvent coexister (topbar + timeline tab) — on
 // les adresse en bloc via leur classe partagée pour MAJ état/icône en sync.
 const btnPlayPause = document.getElementById('btn-play-pause');
 const playButtons = document.querySelectorAll('.play-btn');
+var beginnerEditor;
 function setPlayButtonsState(playing) {
   playButtons.forEach(b => {
     b.innerText = playing ? 'Pause' : '▶';
     b.classList.toggle('primary', !playing);
+    b.setAttribute('aria-label', playing ? 'Mettre en pause' : 'Lire l’animation');
   });
+  beginnerEditor?.refresh();
 }
 const inputFps = document.getElementById('fps-input');
 const inputTimelineViewSeconds = document.getElementById('timeline-view-seconds');
@@ -171,6 +179,7 @@ const btnDeleteSelected = document.getElementById('btn-delete-selected');
 
 // Zoom controls
 const canvasWrapper = document.getElementById('canvas-wrapper');
+const btnResetView = document.getElementById('btn-reset-view');
 
 // Image dither
 const imgDither = document.getElementById('img-dither');
@@ -364,6 +373,7 @@ function undo() {
   clearSelection();
   updateUI();
   updateUndoButtons();
+  scheduleAutosave();
 }
 
 function redo() {
@@ -375,6 +385,7 @@ function redo() {
   clearSelection();
   updateUI();
   updateUndoButtons();
+  scheduleAutosave();
 }
 
 function updateUndoButtons() {
@@ -477,8 +488,8 @@ function init() {
   }
 
   // Update button texts
-  btnApplyImage.innerText = "Add Image";
-  btnApplyText.innerText = "Add Text";
+  btnApplyImage.innerText = "Ajouter l’image";
+  btnApplyText.innerText = "Ajouter le texte";
   btnApplyImage.addEventListener('click', applyImageTool);
   btnApplyText.addEventListener('click', applyTextTool);
   renderStockImages();
@@ -489,21 +500,21 @@ function init() {
   btnTogglePencil.addEventListener('click', togglePencilMode);
 
   // Pointer events — unifié mouse + touch + stylet
-  canvas.addEventListener('pointerdown', handlePointerDown);
-  canvas.addEventListener('pointermove', handlePointerMove);
-  canvas.addEventListener('pointerup', handlePointerUp);
-  canvas.addEventListener('pointercancel', handlePointerUp);
+  interactionSurface.addEventListener('pointerdown', handlePointerDown);
+  interactionSurface.addEventListener('pointermove', handlePointerMove);
+  interactionSurface.addEventListener('pointerup', handlePointerUp);
+  interactionSurface.addEventListener('pointercancel', handlePointerUp);
   
   // Keyboard Delete + Space pan
   window.addEventListener('keydown', (e) => {
     const activeTag = document.activeElement.tagName.toLowerCase();
-    if (activeTag === 'input' || activeTag === 'textarea') return;
+    if (['input', 'textarea', 'select', 'button'].includes(activeTag) || document.body.dataset.mode === 'beginner') return;
 
     if (e.code === 'Space' && !e.repeat) {
       e.preventDefault();
       if (currentTool !== 'pan') {
         prevToolBeforeSpace = currentTool;
-        setTool('pan');
+        setTool('pan', { preserveSelection: true });
       }
       return;
     }
@@ -516,7 +527,7 @@ function init() {
   });
   window.addEventListener('keyup', (e) => {
     if (e.code === 'Space' && prevToolBeforeSpace !== null) {
-      setTool(prevToolBeforeSpace);
+      setTool(prevToolBeforeSpace, { preserveSelection: true });
       prevToolBeforeSpace = null;
     }
   });
@@ -564,6 +575,7 @@ function init() {
 
   // Init des fonctionnalités additionnelles
   initExtras();
+  if (btnResetView) btnResetView.addEventListener('click', resetZoom);
   initStageFit();
 }
 
@@ -627,7 +639,7 @@ function applySnap(v) {
 function handlePointerDown(e) {
   if (isPlaying) return;
   lastPointerType = e.pointerType || 'mouse';
-  canvas.setPointerCapture(e.pointerId);
+  interactionSurface.setPointerCapture(e.pointerId);
   canvasPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
   // Deuxième pointer : pinch = ZOOM de la vue (toujours). Le redimensionnement
@@ -637,6 +649,10 @@ function handlePointerDown(e) {
     isDragging = false;
     isResizing = false;
     resizeHandle = null;
+    isRotating = false;
+    rotateCenter = null;
+    isPanning = false;
+    cancelLongPress();
     // Supprime la dernière stroke du pinceau si elle vient d'être amorcée
     if (currentTool === 'pencil' && currentDrawingId) {
       const obj = getObject(currentDrawingId);
@@ -657,13 +673,15 @@ function handlePointerDown(e) {
   }
   if (canvasPointers.size > 2) return;
 
-  if (currentTool === 'pan') {
+  // Déplacement de la vue : outil Main, Espace temporaire, ou bouton central.
+  if (currentTool === 'pan' || e.button === 1) {
+    e.preventDefault();
     isPanning = true;
     panStartClientX = e.clientX;
     panStartClientY = e.clientY;
     panStartViewX = viewPanX;
     panStartViewY = viewPanY;
-    canvas.style.cursor = 'grabbing';
+    interactionSurface.style.cursor = 'grabbing';
     return;
   }
 
@@ -1169,15 +1187,15 @@ function updateMarqueeSelection() {
 }
 
 function handlePointerUp(e) {
-  if (e && e.pointerId !== undefined && canvas.hasPointerCapture(e.pointerId)) {
-    canvas.releasePointerCapture(e.pointerId);
+  if (e && e.pointerId !== undefined && interactionSurface.hasPointerCapture(e.pointerId)) {
+    interactionSurface.releasePointerCapture(e.pointerId);
   }
   canvasPointers.delete(e.pointerId);
   cancelLongPress();
 
   if (isPanning) {
     isPanning = false;
-    canvas.style.cursor = 'grab';
+    interactionSurface.style.cursor = cursorForTool(currentTool);
     return;
   }
 
@@ -1611,15 +1629,19 @@ function closeDrawDropdown() {
   drawDropdown.setAttribute('hidden', '');
 }
 
-function setTool(tool) {
+function cursorForTool(tool) {
+  return tool === 'select' ? 'default' : tool === 'pan' ? 'grab' : 'crosshair';
+}
+
+function setTool(tool, { preserveSelection = false } = {}) {
   currentTool = tool;
-  if (tool !== 'select') {
+  if (tool !== 'select' && !preserveSelection) {
     clearSelection();
     updateSelectionUI();
     renderCanvas();
   }
   // Cursor
-  canvas.style.cursor = tool === 'select' ? 'default' : tool === 'pan' ? 'grab' : 'crosshair';
+  interactionSurface.style.cursor = cursorForTool(tool);
   // Active state sur les boutons non-draw
   if (toolButtons) {
     toolButtons.forEach(b => b.classList.toggle('active', b.dataset.tool === tool));
@@ -1655,6 +1677,7 @@ function updateUI() {
   updateSelectionUI();
   renderCanvas();
   renderTimeline();
+  beginnerEditor?.refresh();
 }
 
 function drawItem(context, item) {
@@ -2050,6 +2073,170 @@ function drawFrameToContext(context, frameIndex, drawActiveSelectionBox = false,
   }
 }
 
+// Dessine un Pacman simplifié dans la zone de travail. Le renderer principal de
+// Pacman lit les pixels bruts du tableau pour l'effet « manger » ; cette version
+// d'édition évite cette lecture quand l'objet se trouve hors du tableau.
+function drawWorkspacePacman(context, item) {
+  const opacity = item.opacity != null ? item.opacity : 1;
+  if (opacity <= 0) return;
+  const r = item.size || 6;
+  const trail = item.trail || [];
+  let dir = 0;
+  if (trail.length >= 2) {
+    const a = trail[trail.length - 2], b = trail[trail.length - 1];
+    if (b.x !== a.x || b.y !== a.y) dir = Math.atan2(b.y - a.y, b.x - a.x);
+  }
+  dir += (item.rotation || 0) * Math.PI / 180;
+  const f = item.f || 0;
+  const mouth = 0.45 * (0.55 + 0.45 * Math.sin(f * 0.9));
+  context.save();
+  context.globalAlpha *= opacity;
+  context.fillStyle = item.color || '#ffe14d';
+  context.beginPath();
+  context.moveTo(item.x, item.y);
+  context.arc(item.x, item.y, r, dir + mouth, dir - mouth + Math.PI * 2);
+  context.closePath();
+  context.fill();
+  context.restore();
+}
+
+function drawWorkspaceItem(context, item) {
+  if (item.type === 'pacman') drawWorkspacePacman(context, item);
+  else drawItem(context, item);
+}
+
+// Overlay plein espace : le tableau LED reste le rendu de sortie exact, tandis
+// que cet overlay montre les portions d'objets situées en dehors de ses limites.
+// Les coordonnées restent celles du projet, donc hit-test, drag et keyframes ne
+// changent pas de modèle.
+function renderWorkspaceOverlay() {
+  if (!workspaceOverlay || !workspaceCtx || !canvasWrapper) return;
+  const cssW = workspaceOverlay.clientWidth;
+  const cssH = workspaceOverlay.clientHeight;
+  if (cssW <= 0 || cssH <= 0) return;
+
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const pixelW = Math.max(1, Math.round(cssW * dpr));
+  const pixelH = Math.max(1, Math.round(cssH * dpr));
+  if (workspaceOverlay.width !== pixelW || workspaceOverlay.height !== pixelH) {
+    workspaceOverlay.width = pixelW;
+    workspaceOverlay.height = pixelH;
+  }
+
+  const overlayRect = workspaceOverlay.getBoundingClientRect();
+  const boardRect = canvas.getBoundingClientRect();
+  const originX = boardRect.left - overlayRect.left;
+  const originY = boardRect.top - overlayRect.top;
+  const scaleX = boardRect.width / WIDTH;
+  const scaleY = boardRect.height / HEIGHT;
+  if (!Number.isFinite(scaleX) || !Number.isFinite(scaleY) || scaleX <= 0 || scaleY <= 0) return;
+
+  const context = workspaceCtx;
+  context.setTransform(dpr, 0, 0, dpr, 0, 0);
+  context.clearRect(0, 0, cssW, cssH);
+  context.setTransform(dpr * scaleX, 0, 0, dpr * scaleY, dpr * originX, dpr * originY);
+  context.imageSmoothingEnabled = false;
+  context.save();
+
+  // Clip pair-impair : tout le viewport logique SAUF le rectangle du tableau.
+  const worldLeft = -originX / scaleX;
+  const worldTop = -originY / scaleY;
+  const worldW = cssW / scaleX;
+  const worldH = cssH / scaleY;
+  context.beginPath();
+  context.rect(worldLeft - 2, worldTop - 2, worldW + 4, worldH + 4);
+  context.rect(0, 0, WIDTH, HEIGHT);
+  context.clip('evenodd');
+
+  if (onionSkinEnabled && !isPlaying && currentFrameIndex > 0) {
+    context.save();
+    context.globalAlpha = 0.25;
+    evaluateScene(project, currentFrameIndex - 1).forEach(item => drawWorkspaceItem(context, item));
+    context.restore();
+  }
+
+  const items = currentItems();
+  items.forEach(item => drawWorkspaceItem(context, item));
+  if (shapePreview) drawShape(context, shapePreview);
+  if (pacmanPreview) {
+    context.save();
+    context.globalAlpha = 0.65;
+    context.strokeStyle = '#ffe14d';
+    context.lineWidth = 1 / Math.max(scaleX, scaleY);
+    context.beginPath();
+    context.moveTo(pacmanPreview.x1, pacmanPreview.y1);
+    context.lineTo(pacmanPreview.x2, pacmanPreview.y2);
+    context.stroke();
+    drawWorkspacePacman(context, {
+      type: 'pacman', x: pacmanPreview.x2, y: pacmanPreview.y2,
+      size: pacmanPreview.size || 6, color: '#ffe14d', opacity: 1
+    });
+    context.restore();
+  }
+
+  // Cadres et poignées restent visibles lorsque l'objet sort du tableau.
+  if (!isPlaying && selectedIds.size > 0) {
+    const logicalPx = 1 / Math.max(scaleX, scaleY);
+    const single = selectedIds.size === 1;
+    for (const item of items) {
+      if (!selectedIds.has(item.sourceId)) continue;
+      const primary = item.sourceId === selectedItemId;
+      const corners = getRotatedCorners(item);
+      context.strokeStyle = primary ? '#f3c94f' : '#ffe69a';
+      context.lineWidth = (primary ? 2 : 1.5) * logicalPx;
+      context.setLineDash(primary ? [6 * logicalPx, 5 * logicalPx] : [3 * logicalPx, 4 * logicalPx]);
+      context.beginPath();
+      context.moveTo(corners[0].x, corners[0].y);
+      for (let i = 1; i < corners.length; i++) context.lineTo(corners[i].x, corners[i].y);
+      context.closePath();
+      context.stroke();
+      context.setLineDash([]);
+
+      if (single) {
+        if (!item.rotation && !isTouchInteraction() &&
+            (item.type === 'text' || item.type === 'image' || item.type === 'pacman')) {
+          const hs = 7 * logicalPx;
+          for (const p of corners) {
+            context.fillStyle = '#ffffff';
+            context.strokeStyle = '#111418';
+            context.lineWidth = 1.5 * logicalPx;
+            context.fillRect(p.x - hs / 2, p.y - hs / 2, hs, hs);
+            context.strokeRect(p.x - hs / 2, p.y - hs / 2, hs, hs);
+          }
+        }
+        const rh = getRotationHandlePoints(item);
+        context.strokeStyle = '#f3c94f';
+        context.lineWidth = 1.5 * logicalPx;
+        context.beginPath();
+        context.moveTo(rh.anchor.x, rh.anchor.y);
+        context.lineTo(rh.handle.x, rh.handle.y);
+        context.stroke();
+        context.fillStyle = '#f3c94f';
+        context.beginPath();
+        context.arc(rh.handle.x, rh.handle.y, 6 * logicalPx, 0, Math.PI * 2);
+        context.fill();
+      }
+    }
+  }
+
+  if (!isPlaying && marqueeRect) {
+    const logicalPx = 1 / Math.max(scaleX, scaleY);
+    const x = Math.min(marqueeRect.x1, marqueeRect.x2);
+    const y = Math.min(marqueeRect.y1, marqueeRect.y2);
+    const w = Math.abs(marqueeRect.x2 - marqueeRect.x1);
+    const h = Math.abs(marqueeRect.y2 - marqueeRect.y1);
+    context.fillStyle = 'rgba(243,201,79,0.10)';
+    context.fillRect(x, y, w, h);
+    context.strokeStyle = '#f3c94f';
+    context.lineWidth = 1.5 * logicalPx;
+    context.setLineDash([5 * logicalPx, 4 * logicalPx]);
+    context.strokeRect(x, y, w, h);
+    context.setLineDash([]);
+  }
+
+  context.restore();
+}
+
 function renderCanvas() {
   if (project.frameCount < 1) return;
 
@@ -2182,6 +2369,8 @@ function renderCanvas() {
     ctx.strokeRect(minX, minY, maxX - minX, maxY - minY);
     ctx.setLineDash([]);
   }
+
+  renderWorkspaceOverlay();
 }
 
 // Phase 6 : la frame strip est devenue une vraie timeline scrubbable. Il n'y
@@ -2725,7 +2914,7 @@ async function exportToBin() {
   }
 
   const filename = (exportFilename.value.trim() || 'video') + '.bin';
-  const useCustomMapping = exportMapping.value === 'custom';
+  const useCustomMapping = document.body.dataset.mode === 'beginner' || exportMapping.value === 'custom';
   const totalFrames = project.frameCount;
   const totalPixels = WIDTH * HEIGHT;
 
@@ -2768,6 +2957,18 @@ async function exportToBin() {
 
   // Use native "Save As" dialog via File System Access API
   try {
+    if (window.matchMedia('(max-width: 1023px)').matches || typeof window.showSaveFilePicker !== 'function') {
+      const url = URL.createObjectURL(finalBlob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      exportProgressBar.style.width = '100%';
+      exportProgressText.innerText = '100%';
+      exportStatusText.innerText = `Téléchargement lancé : ${filename}.`;
+      return;
+    }
     const handle = await window.showSaveFilePicker({
       suggestedName: filename,
       types: [{
@@ -2789,12 +2990,10 @@ async function exportToBin() {
       console.error('Erreur lors de l\'enregistrement :', err);
       exportStatusText.innerText = `Erreur : ${err.message}`;
     }
+  } finally {
+    btnExportVideo.disabled = false;
+    renderCanvas();
   }
-
-  btnExportVideo.disabled = false;
-
-  // Re-render current view since offCtx was used for export
-  renderCanvas();
 }
 
 // Run
@@ -2824,14 +3023,14 @@ async function connectBle() {
 
     isBleConnected = true;
     setBleStatus('connected', 'Connecté');
-    btnConnectBle.innerText = 'Disconnect BLE';
+    btnConnectBle.innerText = 'Déconnecter';
     btnStreamBle.hidden = false;
     if (btnBleTestPattern) btnBleTestPattern.disabled = false;
 
     device.addEventListener('gattserverdisconnected', onBleDisconnected);
   } catch(err) {
     console.error(err);
-    setBleStatus('error', 'Erreur');
+    setBleStatus('error', err.name === 'NotFoundError' ? 'Connexion annulée. Réessayez lorsque le panneau est allumé.' : 'Connexion impossible. Vérifiez le panneau et le Bluetooth.');
   }
 }
 
@@ -2847,8 +3046,8 @@ function setBleStatus(state, label) {
 
 function onBleDisconnected() {
     isBleConnected = false;
-    setBleStatus('disconnected', 'Not connected');
-    btnConnectBle.innerText = 'Connect BLE';
+    setBleStatus('disconnected', 'Non connecté');
+    btnConnectBle.innerText = 'Connecter le panneau';
     btnStreamBle.hidden = true;
     if (btnBleTestPattern) btnBleTestPattern.disabled = true;
     gattServer = null;
@@ -2867,7 +3066,7 @@ async function streamToBle() {
     return;
   }
 
-  const useCustomMapping = exportMapping.value === 'custom';
+  const useCustomMapping = document.body.dataset.mode === 'beginner' || exportMapping.value === 'custom';
   const totalFrames = project.frameCount;
   const totalPixels = WIDTH * HEIGHT;
 
@@ -3116,6 +3315,7 @@ function applyCanvasTransform() {
   if (!container) return;
   container.style.transform = `translate(${viewPanX}px, ${viewPanY}px) scale(${viewZoom})`;
   container.style.transformOrigin = '50% 50%';
+  renderWorkspaceOverlay();
 }
 function setZoom(z, centerX, centerY) {
   const newZ = Math.max(0.5, Math.min(8, z));
@@ -3154,7 +3354,7 @@ function initZoomPan() {
   const active = new Map(); // pointerId -> {x,y}
   let pinchStart = null;
   canvasWrapper.addEventListener('pointerdown', (e) => {
-    if (e.target === canvas) return; // canvas gère ses propres events
+    if (e.target === canvas || e.target === workspaceOverlay) return; // surface d'édition gère ses propres events
     active.set(e.pointerId, { x: e.clientX, y: e.clientY });
     canvasWrapper.setPointerCapture(e.pointerId);
   });
@@ -3261,6 +3461,7 @@ async function exportGif() {
 // ---- Keyboard shortcuts ----
 function initShortcuts() {
   window.addEventListener('keydown', (e) => {
+    if (document.body.dataset.mode === 'beginner') return;
     const activeTag = document.activeElement ? document.activeElement.tagName.toLowerCase() : '';
     const inInput = activeTag === 'input' || activeTag === 'textarea' || activeTag === 'select';
     const ctrl = e.ctrlKey || e.metaKey;
@@ -3302,7 +3503,7 @@ function initShortcuts() {
       return;
     }
 
-    if (inInput) return;
+    if (inInput || activeTag === 'button' || e.defaultPrevented) return;
 
     if (e.key === ' ') { e.preventDefault(); togglePlay(); return; }
     if (e.key === 'Escape') {
@@ -3793,7 +3994,7 @@ function initExtras() {
     btnBleTestPattern.disabled = true;
     btnBleTestPattern.addEventListener('click', sendBleTestPattern);
   }
-  setBleStatus('disconnected', 'Not connected');
+  setBleStatus('disconnected', 'Non connecté');
 
   // GIF export
   if (btnExportGif) btnExportGif.addEventListener('click', exportGif);
@@ -3905,3 +4106,25 @@ function setupDesktopSidePanel() {
   if (mq.addEventListener) mq.addEventListener('change', apply);
   else if (mq.addListener) mq.addListener(apply);
 }
+
+beginnerEditor = initBeginnerEditor({
+  getProject: () => project,
+  isPlaying: () => isPlaying,
+  stop: () => { if (isPlaying) stop(); },
+  togglePlay,
+  resetView: () => { clearSelection(); resetZoom(); updateUI(); },
+  save: saveProjectToFile,
+  load: triggerLoadProject,
+  apply: (options, checkpoint) => {
+    if (isPlaying) stop();
+    if (checkpoint) pushUndo();
+    applyBeginnerTemplate(project, options, (text, size, font) => {
+      offCtx.font = `${size}px ${font}`;
+      return offCtx.measureText(text).width;
+    });
+    currentFrameIndex = 0;
+    timelineViewStart = 0;
+    updateUI();
+    scheduleAutosave();
+  },
+});

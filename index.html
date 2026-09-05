@@ -2,13 +2,15 @@
 <html lang="fr">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
-    <meta name="theme-color" content="#0f172a" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#111418" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>Glougloubus</title>
     <link rel="manifest" href="./manifest.webmanifest" />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono&family=Press+Start+2P&family=VT323&family=Silkscreen&family=Pixelify+Sans&family=Bungee&display=swap" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&family=Press+Start+2P&family=VT323&family=Silkscreen&family=Pixelify+Sans&family=Bungee&display=swap" rel="stylesheet">
     <script>
       // One-shot SW eviction : si l'ancien service-worker (cache v1) est encore
       // installé, désinscris-le + vide tous les caches + reload pour récupérer
@@ -36,25 +38,34 @@
 
       <!-- TOP BAR -->
       <header class="topbar">
-        <button id="btn-undo" class="iconbtn" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>↶</button>
-        <button id="btn-redo" class="iconbtn" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" disabled>↷</button>
-        <h1 class="brand">🚍 Glougloubus</h1>
-        <button id="btn-jump-start" class="iconbtn" title="Revenir au début" aria-label="Revenir au début">⏮</button>
-        <button id="btn-play-pause" class="btn primary play-btn" title="Play/Pause (Espace)">▶</button>
-        <span id="ble-status-badge" class="ble-dot" data-state="disconnected" title="BLE" aria-hidden="true"></span>
-        <button id="btn-fullscreen" class="iconbtn" title="Plein écran" aria-label="Plein écran">⛶</button>
+        <div class="topbar-left" aria-label="Historique">
+          <button id="btn-undo" class="iconbtn" title="Annuler (Ctrl+Z)" aria-label="Annuler" disabled>↶</button>
+          <button id="btn-redo" class="iconbtn" title="Rétablir (Ctrl+Shift+Z)" aria-label="Rétablir" disabled>↷</button>
+        </div>
+        <h1 class="brand">
+          <span class="brand-mark" aria-hidden="true">G</span>
+          <span class="brand-copy"><strong>GlouGlouBus</strong><small>Studio LED</small></span>
+        </h1>
+        <div class="topbar-right" aria-label="Lecture et aperçu">
+          <button id="btn-jump-start" class="iconbtn" title="Revenir au début" aria-label="Revenir au début">⏮</button>
+          <button id="btn-play-pause" class="btn primary play-btn" title="Lecture / pause (Espace)" aria-label="Lecture ou pause">▶</button>
+          <span id="ble-status-badge" class="ble-dot" data-state="disconnected" title="Statut Bluetooth" aria-hidden="true"></span>
+          <button id="btn-fullscreen" class="iconbtn" title="Mode aperçu" aria-label="Mode aperçu">⛶</button>
+        </div>
       </header>
 
       <!-- TOOL DOCK : déplacé en haut (juste sous le topbar) -->
-      <section class="dock">
+      <section class="dock" aria-label="Outils de création">
+        <span class="dock-label">Créer</span>
         <div class="tool-selector">
-          <button class="tool-btn" data-tool="select" title="Sélection (V)" aria-label="Select">⟑</button>
+          <button class="tool-btn" data-tool="select" title="Sélection (V)" aria-label="Sélection">↖</button>
           <button class="tool-btn" id="btn-draw-tool" title="Dessiner — re-cliquer pour changer d'outil" aria-label="Draw">✏️</button>
           <button class="tool-btn" data-tool="pacman" title="Pacman grignoteur (glisse départ→arrivée)" aria-label="Pacman"><img src="./pacman.svg" alt="" class="tool-icon" /></button>
           <button class="tool-btn" data-tool="pan" title="Déplacer la vue (Espace)" aria-label="Pan">✋</button>
         </div>
+        <span class="dock-divider" aria-hidden="true"></span>
         <div class="palette-row">
-          <input type="color" id="pencil-color" value="#ff0000" aria-label="Couleur du pinceau" />
+          <input type="color" id="pencil-color" value="#ff0000" aria-label="Couleur active" title="Couleur active" />
           <div id="palette-container" class="palette-container" aria-label="Couleurs récentes"></div>
         </div>
       </section>
@@ -65,9 +76,17 @@
           <div class="canvas-container">
             <canvas id="led-canvas" width="960" height="160"></canvas>
           </div>
+          <canvas id="workspace-overlay" aria-label="Zone de travail étendue"></canvas>
         </div>
         <div class="canvas-toolbar">
-          <button id="btn-delete-selected" class="iconbtn danger" disabled title="Supprimer la sélection (Del)" aria-label="Supprimer">🗑</button>
+          <div class="stage-meta" aria-label="Informations de la scène">
+            <span class="stage-kicker">Scène active</span>
+            <span class="stage-spec">192 × 32 LED</span>
+            <span class="stage-pan-hint">Espace + glisser pour déplacer</span>
+          </div>
+          <span class="spacer"></span>
+          <button id="btn-reset-view" class="iconbtn" title="Recentrer le canvas" aria-label="Recentrer le canvas">◎</button>
+          <button id="btn-delete-selected" class="iconbtn danger" disabled title="Supprimer la sélection (Suppr)" aria-label="Supprimer la sélection">⌫</button>
         </div>
       </section>
 
@@ -81,13 +100,13 @@
         <div class="sheet-handle" id="sheet-handle">
           <div class="grip"></div>
           <div class="sheet-tabs" id="sheet-tabs" role="tablist">
-            <button class="tab active" data-tab="timeline" role="tab">⏱ Timeline</button>
-            <button class="tab" data-tab="layers" role="tab">🗂 Calques</button>
-            <button class="tab" data-tab="props" role="tab">⚙ Props</button>
-            <button class="tab" data-tab="text" role="tab">🅣 Texte</button>
-            <button class="tab" data-tab="image" role="tab">🖼 Image</button>
-            <button class="tab" data-tab="export" role="tab">⬇ Export</button>
-            <button class="tab" data-tab="project" role="tab">💾 Projet</button>
+            <button class="tab active" data-tab="timeline" role="tab">Animation</button>
+            <button class="tab" data-tab="layers" role="tab">Calques</button>
+            <button class="tab" data-tab="props" role="tab">Propriétés</button>
+            <button class="tab" data-tab="text" role="tab">Texte</button>
+            <button class="tab" data-tab="image" role="tab">Images</button>
+            <button class="tab" data-tab="export" role="tab">Exporter</button>
+            <button class="tab" data-tab="project" role="tab">Projet</button>
           </div>
         </div>
 
@@ -114,8 +133,8 @@
             </div>
             <div id="timeline-container"></div>
             <p class="hint">
-              Drag la règle pour scrubber. Long-press dans une lane vide pour ajouter un keyframe.
-              Long-press / clic-droit sur un dot pour choisir son easing.
+              Faites glisser la règle pour parcourir l’animation. Un appui long sur une piste ajoute un point d’animation.
+              Un appui long sur un point permet de régler sa transition.
               <span class="gtl-legend"
                 ><span class="gtl-legend-dot" data-easing="linear"></span>linear
                 <span class="gtl-legend-dot" data-easing="ease-in"></span>ease-in
@@ -222,10 +241,10 @@
 
           <!-- PANE: Texte -->
           <div class="tab-pane" data-pane="text" role="tabpanel" hidden>
-            <input type="text" id="text-input" placeholder="Texte à afficher…" />
+            <input type="text" id="text-input" placeholder="Texte à afficher…" aria-label="Texte à afficher" />
             <div class="row">
               <label class="grow">
-                <span>Font</span>
+                <span>Police</span>
                 <select id="text-font">
                   <option value='"JetBrains Mono", monospace' selected>JetBrains Mono</option>
                   <option value='"Press Start 2P", cursive'>Press Start 2P</option>
@@ -235,6 +254,7 @@
                   <option value='"Bungee", cursive'>Bungee</option>
                   <option value='"Inter", sans-serif'>Inter</option>
                   <option value='Arial, sans-serif'>Arial</option>
+                  <option value='Georgia, serif'>Georgia</option>
                   <option value='"Courier New", monospace'>Courier New</option>
                 </select>
               </label>
@@ -244,7 +264,7 @@
 
           <!-- PANE: Image -->
           <div class="tab-pane" data-pane="image" role="tabpanel" hidden>
-            <input type="file" id="image-upload" accept="image/*" />
+            <input type="file" id="image-upload" accept="image/*" aria-label="Importer une image" />
             <div class="row">
               <label><span>X</span><input type="number" inputmode="numeric" id="img-x" value="0"></label>
               <label><span>Y</span><input type="number" inputmode="numeric" id="img-y" value="0"></label>
@@ -287,27 +307,27 @@
             </div>
             <div class="row">
               <label class="grow">
-                <span>Mapping</span>
+                <span>Disposition des LED</span>
                 <select id="export-mapping">
                   <option value="linear">Classique (ligne par ligne)</option>
                   <option value="custom" selected>Grille 24 panneaux (12×2)</option>
                 </select>
               </label>
             </div>
-            <button id="btn-export-video" class="btn export-btn">⬇ Exporter en .bin</button>
+            <button id="btn-export-video" class="btn export-btn">Télécharger le fichier du panneau (.bin)</button>
             <button id="btn-export-gif" class="btn outline">🎞 Exporter en .gif</button>
 
             <div class="section-title">Bluetooth</div>
             <div class="row ble-status-row">
               <span class="ble-dot" data-state="disconnected" id="ble-status-badge-mirror" aria-hidden="true"></span>
-              <span id="ble-status-text" class="ble-status">Not connected</span>
+              <span id="ble-status-text" class="ble-status" role="status">Non connecté</span>
               <span class="spacer"></span>
-              <button id="btn-connect-ble" class="btn outline">Connect</button>
+              <button id="btn-connect-ble" class="btn outline">Connecter le panneau</button>
             </div>
-            <button id="btn-stream-ble" class="btn stream-btn" hidden>📶 Streamer via BLE</button>
+            <button id="btn-stream-ble" class="btn stream-btn" hidden>Envoyer au panneau</button>
             <button id="btn-ble-test-pattern" class="btn outline" title="Envoie un damier" disabled>🧪 Test pattern BLE</button>
 
-            <div id="export-progress-container" class="progress" hidden>
+            <div id="export-progress-container" class="progress" role="status" aria-live="polite" hidden>
               <div class="progress-info">
                 <span id="export-status-text">Extraction des frames…</span>
                 <span id="export-progress-text">0%</span>
@@ -322,8 +342,8 @@
           <div class="tab-pane" data-pane="project" role="tabpanel" hidden>
             <div class="row btn-row">
               <button id="btn-new-project" class="btn outline">🆕 Nouveau</button>
-              <button id="btn-save-project" class="btn outline">💾 Save</button>
-              <button id="btn-load-project" class="btn outline">📂 Load</button>
+              <button id="btn-save-project" class="btn outline">Enregistrer</button>
+              <button id="btn-load-project" class="btn outline">Ouvrir</button>
             </div>
             <input type="file" id="file-load-project" accept=".json,application/json" hidden />
             <p class="hint">Le projet contient les frames, les images et la palette de couleurs récentes. Autosave activée toutes les ~1.5 s.</p>
@@ -358,7 +378,7 @@
         <h3 id="modal-title">Notice</h3>
         <p id="modal-message">Message goes here</p>
         <div class="modal-actions">
-          <button id="modal-btn-cancel" class="btn outline form-cancel">Cancel</button>
+          <button id="modal-btn-cancel" class="btn outline form-cancel">Annuler</button>
           <button id="modal-btn-confirm" class="btn primary form-confirm">OK</button>
         </div>
       </div>

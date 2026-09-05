@@ -26,18 +26,25 @@ function syncAppPaddingToSheet() {
 function setState(state) {
   if (!sheetEl) return;
   sheetEl.dataset.state = state;       // 'peek' | 'open'
+  sheetEl.querySelector('.sheet-body').inert = state === 'peek';
   sheetEl.style.maxHeight = '';        // clear any in-progress drag value
   // padding-bottom suivi par le ResizeObserver sur la sheet (cf. initBottomSheet)
 }
 
 function activateTab(name) {
   if (!tabsEls) return;
-  tabsEls.forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  tabsEls.forEach(t => {
+    const active = t.dataset.tab === name;
+    t.classList.toggle('active', active);
+    t.setAttribute('aria-selected', String(active));
+    t.tabIndex = active ? 0 : -1;
+  });
   panesEls.forEach(p => { p.hidden = p.dataset.pane !== name; });
 }
 
 // Programmatically jump to a tab and open the sheet (used when an item is selected).
 export function sheetAutoOpen(item) {
+  if (document.body.dataset.mode === 'beginner') return;
   if (!sheetEl) return;
   if (sheetEl.dataset.state === 'open') return;
   if (!item) return;
@@ -46,6 +53,7 @@ export function sheetAutoOpen(item) {
   // Pacman : on ouvre la timeline — c'est là qu'on règle le début/fin du trajet.
   else if (item.type === 'pacman') activateTab('timeline');
   else activateTab('props');
+  setState('open');
 }
 
 export function initBottomSheet({ onTabChange } = {}) {
@@ -55,6 +63,25 @@ export function initBottomSheet({ onTabChange } = {}) {
   panesEls = document.querySelectorAll('.tab-pane');
   appShell = document.querySelector('.app-shell');
   if (!sheetEl || !handleEl) return;
+  tabsEls.forEach(t => {
+    t.id = `studio-tab-${t.dataset.tab}`;
+    t.setAttribute('aria-controls', `studio-pane-${t.dataset.tab}`);
+    t.addEventListener('keydown', e => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+      e.preventDefault();
+      const visible = [...tabsEls].filter(tab => tab.getClientRects().length);
+      const index = visible.indexOf(t);
+      const next = e.key === 'Home' ? 0 : e.key === 'End' ? visible.length - 1 : (index + (e.key === 'ArrowRight' ? 1 : -1) + visible.length) % visible.length;
+      visible[next].click();
+      visible[next].focus();
+    });
+  });
+  panesEls.forEach(p => {
+    p.id = `studio-pane-${p.dataset.pane}`;
+    p.setAttribute('aria-labelledby', `studio-tab-${p.dataset.pane}`);
+  });
+  activateTab('timeline');
+  setState(sheetEl.dataset.state || 'peek');
 
   // Tab click : open the sheet and switch pane
   tabsEls.forEach(t => {
